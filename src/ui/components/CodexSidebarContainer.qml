@@ -7,15 +7,21 @@ Rectangle {
     property var backend
     property bool wasAuthenticated: false
     property bool drawerMode: false
+    property color panelColor: "#131A26"
+    property color raisedColor: "#1A2332"
+    property color borderColor: "#243044"
+    property color textColor: "#F8FAFC"
+    property color mutedColor: "#94A3B8"
+    property color accentColor: "#6366F1"
     signal closeRequested()
 
     objectName: "codexChatSidebarContainer"
     radius: 12
-    color: "#161B22"
-    border.color: "#30363D"
+    color: panelColor
+    border.color: borderColor
 
     Component.onCompleted: {
-        wasAuthenticated = backend && backend.codexAuthState === "authenticated"
+        wasAuthenticated = backend && backend.ai.codexAuthState === "authenticated"
         if (wasAuthenticated)
             chatPanel.expanded = true
     }
@@ -31,10 +37,10 @@ Rectangle {
                 objectName: "codexChatSidebarTitle"
                 Layout.fillWidth: true
                 Layout.maximumHeight: implicitHeight
-                text: sidebar.backend && sidebar.backend.aiChatProviderName
-                    ? sidebar.backend.aiChatProviderName + " AI"
+                text: sidebar.backend && sidebar.backend.ai.aiChatProviderName
+                    ? sidebar.backend.ai.aiChatProviderName + " AI"
                     : "AI"
-                color: "#F0F6FC"
+                color: sidebar.textColor
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 15
                 font.weight: Font.Bold
@@ -50,7 +56,7 @@ Rectangle {
             objectName: "codexChatSidebarSubtitle"
             Layout.maximumHeight: implicitHeight
             text: "チャット領域"
-            color: "#8B949E"
+            color: sidebar.mutedColor
             font.family: "Yu Gothic UI"
             font.pixelSize: 10
         }
@@ -58,13 +64,19 @@ Rectangle {
             id: chatPanel
             objectName: "codexChatPanel"
             Layout.fillWidth: true
+            Layout.minimumWidth: 0
             Layout.fillHeight: expanded
             Layout.minimumHeight: expanded ? 180 : implicitHeight
             Layout.preferredHeight: implicitHeight
             Layout.maximumHeight: expanded ? sidebar.height : implicitHeight
             backend: sidebar.backend
             expanded: false
-            panelColor: "#080A09"
+            panelColor: "#06080D"
+            raisedColor: sidebar.raisedColor
+            borderColor: sidebar.borderColor
+            textColor: sidebar.textColor
+            mutedColor: sidebar.mutedColor
+            accentColor: sidebar.accentColor
         }
         Item {
             Layout.fillWidth: true
@@ -74,11 +86,11 @@ Rectangle {
     }
 
     Connections {
-        target: sidebar.backend
+        target: sidebar.backend ? sidebar.backend.ai : null
 
         function onCodexChatChanged() {
             var authenticated = sidebar.backend
-                && sidebar.backend.codexAuthState === "authenticated"
+                && sidebar.backend.ai.codexAuthState === "authenticated"
             if (authenticated && !sidebar.wasAuthenticated)
                 chatPanel.expanded = true
             else if (!authenticated)

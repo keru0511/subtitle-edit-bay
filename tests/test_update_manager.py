@@ -19,6 +19,7 @@ from src.update_manager import (
     download_package,
     validate_package,
 )
+from tests.typed_case import TypedTestCase
 
 
 def _installer(path: Path) -> str:
@@ -26,8 +27,8 @@ def _installer(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-class UpdateManagerTests(unittest.TestCase):
-    def test_download_verifies_size_hash_and_reports_byte_progress(self):
+class UpdateManagerTests(TypedTestCase):
+    def test_download_verifies_size_hash_and_reports_byte_progress(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             tmp_path = Path(temp_dir)
             source = tmp_path / "SubtitleEditBay-Setup.exe"
@@ -51,7 +52,7 @@ class UpdateManagerTests(unittest.TestCase):
             self.assertFalse(destination.with_name(destination.name + ".partial").exists())
             self.assertEqual(progress[-1][0], source.stat().st_size)
 
-    def test_cancel_removes_partial_package(self):
+    def test_cancel_removes_partial_package(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             tmp_path = Path(temp_dir)
             source = tmp_path / "SubtitleEditBay-Setup.exe"
@@ -67,7 +68,7 @@ class UpdateManagerTests(unittest.TestCase):
             self.assertFalse(destination.exists())
             self.assertFalse(destination.with_name(destination.name + ".partial").exists())
 
-    def test_hash_mismatch_and_unsafe_zip_are_rejected(self):
+    def test_hash_mismatch_and_unsafe_zip_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             tmp_path = Path(temp_dir)
             source = tmp_path / "SubtitleEditBay-Setup.exe"
@@ -87,10 +88,10 @@ class UpdateManagerTests(unittest.TestCase):
             with self.assertRaisesRegex(UpdatePackageError, "unsafe path"):
                 validate_package(archive, expected_sha256=hashlib.sha256(archive.read_bytes()).hexdigest())
 
-    def test_installer_helper_command_is_hidden_and_carries_transaction_context(self):
+    def test_installer_helper_command_is_hidden_and_carries_transaction_context(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             tmp_path = Path(temp_dir)
-            with patch("src.update_manager.sys.platform", "win32"):
+            with patch("sys.platform", "win32"):
                 command = build_installer_helper_command(
                     tmp_path,
                     tmp_path / "package.exe",
@@ -110,7 +111,7 @@ class UpdateManagerTests(unittest.TestCase):
         self.assertEqual(Path(command[install_index + 1]), tmp_path)
         self.assertNotIn(str(tmp_path / "SubtitleEditBay.exe"), command)
 
-    def test_release_asset_metadata_selects_installer_and_checksum(self):
+    def test_release_asset_metadata_selects_installer_and_checksum(self) -> None:
         payload = {
             "tag_name": "v1.2.3",
             "body": "notes",
@@ -131,6 +132,7 @@ class UpdateManagerTests(unittest.TestCase):
             ],
         }
         with (
+            patch("sys.platform", "win32"),
             patch("src.updater.resolve_application_version", return_value="v1.0.0"),
             patch("src.updater.urllib.request.urlopen", return_value=io.BytesIO(json.dumps(payload).encode("utf-8"))),
         ):
@@ -139,3 +141,32 @@ class UpdateManagerTests(unittest.TestCase):
         self.assertEqual(info.package_size, 42)
         self.assertTrue(info.checksum_url.endswith("setup.exe.sha256"))
         self.assertTrue(info.manifest_url.endswith("setup.exe.manifest.json"))
+
+
+class PlatformUpdateTests(TypedTestCase):
+    def test_non_windows_rejects_update_check_before_network_access(self) -> None:
+        for platform in ("darwin", "linux"):
+            with (
+                self.subTest(platform=platform),
+                patch("sys.platform", platform),
+                patch("src.updater.urllib.request.urlopen") as urlopen,
+            ):
+                with self.assertRaisesRegex(updater.UpdaterError, "未対応"):
+                    updater.fetch_latest_release(Path("."))
+                urlopen.assert_not_called()
+
+    def test_unsupported_installer_handoff_fails_before_launch(self) -> None:
+        from src.update_manager import UpdatePackageError
+
+        with patch("sys.platform", "darwin"), self.assertRaises(UpdatePackageError):
+            build_installer_helper_command(
+                Path("."),
+                Path("setup.exe"),
+                expected_version="1.2.3",
+                expected_sha256="a" * 64,
+                result_path=Path("result.json"),
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

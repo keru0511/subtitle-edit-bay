@@ -6,8 +6,12 @@ Rectangle {
     id: panel
     property var backend
     property bool userExpanded: false
-    property bool expanded: userExpanded || (backend && backend.stage === "ERROR")
-    implicitHeight: expanded ? 280 : 118
+    property bool errorActive: backend && backend.stage === "ERROR"
+    property bool errorExpansionDismissed: false
+    onErrorActiveChanged: if (!errorActive) errorExpansionDismissed = false
+    property bool expanded: userExpanded || (errorActive && !errorExpansionDismissed)
+    property bool compact: false
+    implicitHeight: expanded ? 280 : (compact ? 56 : 118)
     radius: 12
     color: "#0B100D"
     border.color: "#27312C"
@@ -40,7 +44,15 @@ Rectangle {
             Button {
                 objectName: "applicationLogToggleButton"
                 text: panel.expanded ? "縮小" : "詳細"
-                onClicked: panel.userExpanded = !panel.userExpanded
+                onClicked: {
+                    if (panel.expanded) {
+                        panel.userExpanded = false
+                        panel.errorExpansionDismissed = panel.errorActive
+                    } else {
+                        panel.userExpanded = true
+                        panel.errorExpansionDismissed = false
+                    }
+                }
             }
             Button {
                 objectName: "copyLogsButton"
@@ -67,6 +79,7 @@ Rectangle {
 
         ScrollView {
             id: applicationLogScrollView
+            visible: !panel.compact || panel.expanded
             objectName: "applicationLogScrollView"
             Layout.fillWidth: true
             Layout.fillHeight: true

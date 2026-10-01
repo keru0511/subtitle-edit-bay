@@ -7,7 +7,7 @@ Item {
     id: root
 
     required property var backend
-    property var timeline: root.backend.cutTimeline
+    property var timeline: root.backend.workspace.cutTimeline
     property real selectionStartMs: 0
     property real selectionEndMs: 0
     property string selectedCutId: ""
@@ -38,12 +38,37 @@ Item {
         return Math.abs(end - start) >= 50
     }
 
+    function canRestoreSelection() {
+        if (!root.timeline.hasCuts)
+            return false
+        var cuts = root.timeline.cuts || []
+        if (root.selectedCutId) {
+            for (var selectedIndex = 0; selectedIndex < cuts.length; ++selectedIndex) {
+                if (String(cuts[selectedIndex].id) === root.selectedCutId)
+                    return true
+            }
+            return false
+        }
+        if (!cutStartField.acceptableInput || !cutEndField.acceptableInput)
+            return false
+        var start = Math.min(Number(cutStartField.text), Number(cutEndField.text))
+        var end = Math.max(Number(cutStartField.text), Number(cutEndField.text))
+        if (end - start < 0.05)
+            return false
+        for (var index = 0; index < cuts.length; ++index) {
+            if (start < Number(cuts[index].source_end)
+                    && end > Number(cuts[index].source_start))
+                return true
+        }
+        return false
+    }
+
     onSelectionStartMsChanged: syncTimer.restart()
     onSelectionEndMsChanged: syncTimer.restart()
     Component.onCompleted: timelineSyncTimer.restart()
 
     Connections {
-        target: root.backend
+        target: root.backend.workspace
         function onCutTimelineChanged() {
             timelineSyncTimer.restart()
         }
@@ -178,9 +203,9 @@ Item {
                 var start = Math.min(Number(cutStartField.text), Number(cutEndField.text))
                 var end = Math.max(Number(cutStartField.text), Number(cutEndField.text))
                 if (root.selectedCutId)
-                    root.backend.updateCutRange(root.selectedCutId, start, end)
+                    root.backend.workspace.updateCutRange(root.selectedCutId, start, end)
                 else
-                    root.backend.addCut(start, end)
+                    root.backend.workspace.addCut(start, end)
             }
         }
 
@@ -191,14 +216,14 @@ Item {
                 objectName: "restoreCutRangeButton"
                 Layout.fillWidth: true
                 text: root.selectedCutId ? "このカットを復元" : "選択範囲を復元"
-                enabled: !root.backend.running && Boolean(root.timeline.hasCuts)
+                enabled: !root.backend.running && root.canRestoreSelection()
                 onClicked: {
                     if (root.selectedCutId)
-                        root.backend.restoreCut(root.selectedCutId)
+                        root.backend.workspace.restoreCut(root.selectedCutId)
                     else if (root.commitFields()) {
                         var start = Math.min(Number(cutStartField.text), Number(cutEndField.text))
                         var end = Math.max(Number(cutStartField.text), Number(cutEndField.text))
-                        root.backend.restoreRange(start, end)
+                        root.backend.workspace.restoreRange(start, end)
                     }
                 }
             }
@@ -207,7 +232,7 @@ Item {
                 Layout.fillWidth: true
                 text: "全解除"
                 enabled: !root.backend.running && Boolean(root.timeline.hasCuts)
-                onClicked: root.backend.clearCuts()
+                onClicked: root.backend.workspace.clearCuts()
             }
         }
 
@@ -256,6 +281,7 @@ Item {
                         }
                     }
                     SmallButton {
+                        objectName: "workspaceCutSelectButton-" + String(cutRow.modelData.id)
                         Layout.preferredWidth: 44
                         text: "選択"
                         onClicked: root.cutSelected(
@@ -280,8 +306,8 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             spacing: 5
-            SmallButton { objectName: "undoCutButton"; Layout.fillWidth: true; text: "元に戻す"; enabled: root.backend.canUndo && !root.backend.running; onClicked: root.backend.undoCutEdit() }
-            SmallButton { objectName: "redoCutButton"; Layout.fillWidth: true; text: "やり直す"; enabled: root.backend.canRedo && !root.backend.running; onClicked: root.backend.redoCutEdit() }
+            SmallButton { objectName: "undoCutButton"; Layout.fillWidth: true; text: "元に戻す"; enabled: root.backend.subtitles.canUndo && !root.backend.running; onClicked: root.backend.subtitles.undoCutEdit() }
+            SmallButton { objectName: "redoCutButton"; Layout.fillWidth: true; text: "やり直す"; enabled: root.backend.subtitles.canRedo && !root.backend.running; onClicked: root.backend.subtitles.redoCutEdit() }
         }
 
         Text {

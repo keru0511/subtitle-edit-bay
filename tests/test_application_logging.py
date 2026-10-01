@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 import time
 import unittest
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
 
 from src.application_logging import (
     ApplicationLogger,
@@ -14,11 +14,26 @@ from src.application_logging import (
     default_log_directory,
     redact_text,
 )
+from src.data_boundary import decode_json, is_string_object_mapping
+from tests.typed_case import TypedTestCase
 
 
-class ApplicationLoggingTests(unittest.TestCase):
+@contextmanager
+def patched_environment(values: Mapping[str, str], *, clear: bool = False) -> Iterator[None]:
+    original = dict(os.environ)
+    try:
+        if clear:
+            os.environ.clear()
+        os.environ.update(values)
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(original)
+
+
+class ApplicationLoggingTests(TypedTestCase):
     def test_default_directory_matches_installer_launcher_contract(self) -> None:
-        with patch.dict(os.environ, {"LOCALAPPDATA": "C:/LocalAppData"}):
+        with patched_environment({"LOCALAPPDATA": "C:/LocalAppData"}):
             self.assertEqual(
                 default_log_directory("C:/workspace"),
                 Path("C:/LocalAppData") / "Subtitle Edit Bay" / "logs",
@@ -35,7 +50,7 @@ class ApplicationLoggingTests(unittest.TestCase):
         value = (
             '{"access_token":"json-secret","password": "json-password", '
             '"authorization":"Bearer json-bearer"} '
-            r'C:\Users\Alice\My Projects\video.mkv '
+            r"C:\Users\Alice\My Projects\video.mkv "
             "/home/Alice/My Projects/clip.mp4"
         )
 
@@ -48,11 +63,7 @@ class ApplicationLoggingTests(unittest.TestCase):
         self.assertNotIn("/home/Alice", redacted)
 
     def test_redacts_full_authorization_header_and_quoted_secret_with_spaces(self) -> None:
-        value = (
-            "Authorization: Basic Zm9vOmJhcg==\n"
-            'password="two words"\n'
-            "token=url-secret&next=ok"
-        )
+        value = 'Authorization: Basic Zm9vOmJhcg==\npassword="two words"\ntoken=url-secret&next=ok'
 
         redacted = redact_text(value)
 
@@ -77,10 +88,11 @@ class ApplicationLoggingTests(unittest.TestCase):
             logger.append("token=do-not-store " + ("x" * 2_000), severity="ERROR")
 
             self.assertLessEqual(len(logger.text), 1_000)
-            records = [
-                json.loads(line)
-                for line in logger.log_path.read_text(encoding="utf-8").splitlines()
-            ]
+            records: list[Mapping[str, object]] = []
+            for line in logger.log_path.read_text(encoding="utf-8").splitlines():
+                record = decode_json(line)
+                assert is_string_object_mapping(record)
+                records.append(record)
             self.assertEqual(records[0]["component"], "ffmpeg")
             self.assertEqual(records[0]["process_id"], 42)
             self.assertNotIn("do-not-store", logger.log_path.read_text(encoding="utf-8"))
@@ -109,9 +121,7 @@ class ApplicationLoggingTests(unittest.TestCase):
 
             rotated = logger.log_path.with_suffix(".1.jsonl")
             self.assertTrue(rotated.is_file())
-            combined = rotated.read_text(encoding="utf-8") + logger.log_path.read_text(
-                encoding="utf-8"
-            )
+            combined = rotated.read_text(encoding="utf-8") + logger.log_path.read_text(encoding="utf-8")
             for marker in ("first", "second", "third"):
                 self.assertIn(marker, combined)
 
@@ -237,6 +247,20 @@ class ApplicationLoggingTests(unittest.TestCase):
             self.assertNotIn("newer GUI status", diagnostic)
             self.assertNotIn("private", diagnostic)
             self.assertNotIn(r"C:\private", diagnostic)
+
+
+class PlatformPathTests(TypedTestCase):
+    def test_log_fallback_preserves_existing_workspace_location(self) -> None:
+        with patched_environment({}, clear=True):
+            self.assertEqual(default_log_directory("workspace"), Path("workspace/.local/logs"))
+
+    def test_update_cache_uses_existing_environment_priority(self) -> None:
+        from src.platform_paths import update_directory
+
+        with patched_environment({"LOCALAPPDATA": "/local", "XDG_CACHE_HOME": "/cache"}, clear=True):
+            self.assertEqual(update_directory(), Path("/local/SubtitleEditBay/updates"))
+        with patched_environment({"XDG_CACHE_HOME": "/cache"}, clear=True):
+            self.assertEqual(update_directory(), Path("/cache/SubtitleEditBay/updates"))
 
 
 if __name__ == "__main__":

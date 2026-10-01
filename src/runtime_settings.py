@@ -3,16 +3,18 @@ from __future__ import annotations
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Mapping, Sequence, TypedDict, cast
 
+from .transcription_profile import DEFAULT_VAD_ONSET, DEFAULT_VAD_OFFSET
 from .ass_template import DEFAULT_SUBTITLE_OUTLINE_COLOR, DEFAULT_SUBTITLE_OUTLINE_THICKNESS
 from .runtime_config import load_command_runtime_config
 
 VALID_SHORT_FIT_MODES = ("cover", "contain", "blur")
 VALID_SHORT_TRANSITION_TYPES = ("crossfade", "fade", "cut")
 
-RuntimeConfig = Mapping[str, Any]
+RuntimeConfig = Mapping[str, object]
 DEFAULT_POSTPROCESS_WORKERS = max(1, min(4, os.cpu_count() or 1))
+DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT = 20.0
 
 
 @dataclass(frozen=True)
@@ -21,8 +23,8 @@ class TranscriptionSettings:
     device: str = "cpu"
     compute_type: str = "int8"
     language: str | None = "ja"
-    vad_onset: float | None = 0.35
-    vad_offset: float | None = 0.2
+    vad_onset: float | None = DEFAULT_VAD_ONSET
+    vad_offset: float | None = DEFAULT_VAD_OFFSET
     skip_existing_transcripts: bool = True
 
 
@@ -34,7 +36,7 @@ class SubtitleLayoutSettings:
     subtitle_max_gap_seconds: float = 0.32
     subtitle_end_padding_seconds: float = 0.08
     subtitle_min_duration_seconds: float = 0.35
-    subtitle_volume_scale_percent: float = 20.0
+    subtitle_volume_scale_percent: float = DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT
 
 
 @dataclass(frozen=True)
@@ -107,6 +109,44 @@ class RuntimeSettings:
     alignment: AlignmentSettings
     pipeline: PipelineSettings
     short_video: ShortModeSettings
+
+
+class TranscribeRuntimeOptions(TypedDict):
+    alignment_sample_rate: int
+    alignment_offset_adjustment: float
+    model: str
+    device: str
+    compute_type: str
+    language: str | None
+    vad_onset: float | None
+    vad_offset: float | None
+    skip_existing_transcripts: bool
+    postprocess_workers: int
+    subtitle_font_size: int
+    subtitle_outline_color: str
+    subtitle_outline_thickness: int
+    subtitle_volume_scale_percent: float
+    subtitle_max_gap_seconds: float
+    subtitle_end_padding_seconds: float
+    subtitle_min_duration_seconds: float
+
+
+class RenderRuntimeOptions(TypedDict):
+    video_codec: str
+    audio_codec: str
+    output_audio_track: str
+    nvenc_preset: str
+    nvenc_cq: int
+    x264_crf: int
+    audio_normalize: bool
+    audio_target_lufs: float
+    audio_loudness_range: float
+    audio_true_peak_db: float
+    cut_no_speech: bool
+    no_speech_min_seconds: float
+    speech_padding_seconds: float
+    speech_threshold_db: str
+    speech_min_clip_seconds: float
 
 
 TRANSCRIBE_OPTION_KEYS = (
@@ -195,7 +235,7 @@ GUI_CRAIG_PIPELINE_SETTING_KEYS = (
 )
 
 
-def _raw(config: RuntimeConfig, key: str, default: Any) -> Any:
+def _raw(config: RuntimeConfig, key: str, default: object) -> object:
     if key in config:
         return config[key]
     return default
@@ -351,18 +391,33 @@ def settings_from_config(config: RuntimeConfig) -> RuntimeSettings:
         short_video=ShortModeSettings(
             short_mode_enabled=_bool(config, "short_mode_enabled", ShortModeSettings.short_mode_enabled),
             short_mode_output_width=_int(config, "short_mode_output_width", ShortModeSettings.short_mode_output_width),
-            short_mode_output_height=_int(config, "short_mode_output_height", ShortModeSettings.short_mode_output_height),
+            short_mode_output_height=_int(
+                config, "short_mode_output_height", ShortModeSettings.short_mode_output_height
+            ),
             short_mode_output_fps=_int(config, "short_mode_output_fps", ShortModeSettings.short_mode_output_fps),
-            short_mode_global_fit=_choice(config, "short_mode_global_fit", VALID_SHORT_FIT_MODES, ShortModeSettings.short_mode_global_fit),
-            short_mode_global_background_color=_str(config, "short_mode_global_background_color", ShortModeSettings.short_mode_global_background_color),
-            short_mode_transition_type=_choice(config, "short_mode_transition_type", VALID_SHORT_TRANSITION_TYPES, ShortModeSettings.short_mode_transition_type),
-            short_mode_transition_duration=_float(config, "short_mode_transition_duration", ShortModeSettings.short_mode_transition_duration),
+            short_mode_global_fit=_choice(
+                config, "short_mode_global_fit", VALID_SHORT_FIT_MODES, ShortModeSettings.short_mode_global_fit
+            ),
+            short_mode_global_background_color=_str(
+                config, "short_mode_global_background_color", ShortModeSettings.short_mode_global_background_color
+            ),
+            short_mode_transition_type=_choice(
+                config,
+                "short_mode_transition_type",
+                VALID_SHORT_TRANSITION_TYPES,
+                ShortModeSettings.short_mode_transition_type,
+            ),
+            short_mode_transition_duration=_float(
+                config, "short_mode_transition_duration", ShortModeSettings.short_mode_transition_duration
+            ),
             short_mode_bgm_path=_str(config, "short_mode_bgm_path", ShortModeSettings.short_mode_bgm_path),
             short_mode_bgm_in=_float(config, "short_mode_bgm_in", ShortModeSettings.short_mode_bgm_in),
             short_mode_bgm_out=_float(config, "short_mode_bgm_out", ShortModeSettings.short_mode_bgm_out),
             short_mode_bgm_start=_float(config, "short_mode_bgm_start", ShortModeSettings.short_mode_bgm_start),
             short_mode_bgm_volume=_float(config, "short_mode_bgm_volume", ShortModeSettings.short_mode_bgm_volume),
-            short_mode_subtitle_scale_percent=_float(config, "short_mode_subtitle_scale_percent", ShortModeSettings.short_mode_subtitle_scale_percent),
+            short_mode_subtitle_scale_percent=_float(
+                config, "short_mode_subtitle_scale_percent", ShortModeSettings.short_mode_subtitle_scale_percent
+            ),
         ),
     )
 
@@ -371,8 +426,8 @@ def load_runtime_settings(command_name: str, config_path: str | Path | None = No
     return settings_from_config(load_command_runtime_config(command_name, config_path))
 
 
-def settings_to_flat_dict(settings: RuntimeSettings) -> dict[str, Any]:
-    flattened: dict[str, Any] = {}
+def settings_to_flat_dict(settings: RuntimeSettings) -> dict[str, object]:
+    flattened: dict[str, object] = {}
     for group in (
         settings.transcription,
         settings.subtitle_layout,
@@ -383,29 +438,69 @@ def settings_to_flat_dict(settings: RuntimeSettings) -> dict[str, Any]:
         settings.pipeline,
         settings.short_video,
     ):
-        flattened.update(asdict(group))
+        flattened.update(cast(Mapping[str, object], asdict(group)))
     return flattened
 
 
-def select_runtime_options(settings: RuntimeSettings, keys: Sequence[str]) -> dict[str, Any]:
+def select_runtime_options(settings: RuntimeSettings, keys: Sequence[str]) -> dict[str, object]:
     flattened = settings_to_flat_dict(settings)
     return {key: flattened[key] for key in keys}
 
 
-def transcribe_runtime_options(settings: RuntimeSettings) -> dict[str, Any]:
-    return select_runtime_options(settings, TRANSCRIBE_OPTION_KEYS)
+def transcribe_runtime_options(settings: RuntimeSettings) -> TranscribeRuntimeOptions:
+    transcription = settings.transcription
+    alignment = settings.alignment
+    layout = settings.subtitle_layout
+    return {
+        "alignment_sample_rate": alignment.alignment_sample_rate,
+        "alignment_offset_adjustment": alignment.alignment_offset_adjustment,
+        "model": transcription.model,
+        "device": transcription.device,
+        "compute_type": transcription.compute_type,
+        "language": transcription.language,
+        "vad_onset": transcription.vad_onset,
+        "vad_offset": transcription.vad_offset,
+        "skip_existing_transcripts": transcription.skip_existing_transcripts,
+        "postprocess_workers": settings.pipeline.postprocess_workers,
+        "subtitle_font_size": layout.subtitle_font_size,
+        "subtitle_outline_color": layout.subtitle_outline_color,
+        "subtitle_outline_thickness": layout.subtitle_outline_thickness,
+        "subtitle_volume_scale_percent": layout.subtitle_volume_scale_percent,
+        "subtitle_max_gap_seconds": layout.subtitle_max_gap_seconds,
+        "subtitle_end_padding_seconds": layout.subtitle_end_padding_seconds,
+        "subtitle_min_duration_seconds": layout.subtitle_min_duration_seconds,
+    }
 
 
-def render_runtime_options(settings: RuntimeSettings) -> dict[str, Any]:
-    return select_runtime_options(settings, RENDER_OPTION_KEYS)
+def render_runtime_options(settings: RuntimeSettings) -> RenderRuntimeOptions:
+    video = settings.video_export
+    audio = settings.audio_normalize
+    silence = settings.silence_cut
+    return {
+        "video_codec": video.video_codec,
+        "audio_codec": video.audio_codec,
+        "output_audio_track": video.output_audio_track,
+        "nvenc_preset": video.nvenc_preset,
+        "nvenc_cq": video.nvenc_cq,
+        "x264_crf": video.x264_crf,
+        "audio_normalize": audio.audio_normalize,
+        "audio_target_lufs": audio.audio_target_lufs,
+        "audio_loudness_range": audio.audio_loudness_range,
+        "audio_true_peak_db": audio.audio_true_peak_db,
+        "cut_no_speech": silence.cut_no_speech,
+        "no_speech_min_seconds": silence.no_speech_min_seconds,
+        "speech_padding_seconds": silence.speech_padding_seconds,
+        "speech_threshold_db": silence.speech_threshold_db,
+        "speech_min_clip_seconds": silence.speech_min_clip_seconds,
+    }
 
 
-def configured_render_settings(settings: RuntimeSettings, config: RuntimeConfig) -> dict[str, Any]:
+def configured_render_settings(settings: RuntimeSettings, config: RuntimeConfig) -> dict[str, object]:
     flattened = settings_to_flat_dict(settings)
     return {key: flattened[key] for key in PERSISTED_RENDER_SETTING_KEYS if key in config}
 
 
-def gui_runtime_config_updates(settings: RuntimeConfig) -> tuple[dict[str, Any], dict[str, Any]]:
+def gui_runtime_config_updates(settings: RuntimeConfig) -> tuple[dict[str, object], dict[str, object]]:
     return (
         {key: settings[key] for key in GUI_SHARED_SETTING_KEYS if key in settings},
         {key: settings[key] for key in GUI_CRAIG_PIPELINE_SETTING_KEYS if key in settings},

@@ -42,8 +42,8 @@ CLIの優先順位は `CLI > コマンド別設定 > shared > コード既定値
 | `device` | `cuda` | `cuda` または `cpu` |
 | `compute_type` | `float16` | CUDAは通常`float16`、CPUは通常`int8` |
 | `language` | `ja` | 認識言語 |
-| `vad_onset` | `0.35` | 発話開始のVAD閾値 |
-| `vad_offset` | `0.2` | 発話終了のVAD閾値 |
+| `vad_onset` | `0.5` | 発話開始のVAD閾値 |
+| `vad_offset` | `0.363` | 発話終了のVAD閾値 |
 | `width`, `height` | `1920`, `1080` | ASSの基準解像度 |
 | `nvenc_cq` | `18` | NVENC固定品質。小さいほど高画質・大容量 |
 | `x264_crf` | `18` | libx264固定品質。小さいほど高画質・大容量 |

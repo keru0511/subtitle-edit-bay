@@ -3,19 +3,25 @@ from __future__ import annotations
 import copy
 import io
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
-from scripts.aggregate_gui_performance import ReportValidationError, aggregate_shards
+from scripts.aggregate_gui_performance import MergedGuiReport, ReportValidationError, aggregate_shards
 from scripts.compare_gui_performance import compare_reports, main as compare_main
 from scripts.gui_performance_report import SCENARIO_NAMES
-from scripts.plan_gui_performance import validate_inputs
-from scripts.run_gui_performance import parse_args
+from scripts.plan_gui_performance import validate_inputs, select_comparison_commit, main as plan_main
+from scripts.run_gui_performance import parse_args, _run_controller
+from src.data_boundary import decode_json
 from tests.workflow_contracts import load_workflow
+from tests.typed_case import TypedTestCase
+from tests.typed_data import entries, is_string_list, object_dict, section
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,15 +54,22 @@ def raw_run(segment_count: int, repetition: int, value: float = 10.0) -> dict[st
 
 
 def shard_report(kind: str, repetition: int, *, repetitions: int = 3) -> dict[str, object]:
-    current = kind == "current"
-    segment_counts = [3000, 10000] if current else [3000]
+    current = kind != "baseline"
+    segment_counts = [10000] if kind == "large" else [3000]
     return {
         "schema_version": 1,
         "generated_at": "2026-09-07T00:00:00+00:00",
         "revision_label": CURRENT_SHA if current else BASELINE_SHA,
         "harness_revision": CURRENT_SHA,
-        "provenance": {"run_id": "42", "run_attempt": "2", "shard_id": str(repetition)},
-        "environment": {"runner": {"name": f"runner-{repetition}"}, "python": {"version": "3.10"}},
+        "provenance": {
+            "run_id": "42",
+            "run_attempt": "2",
+            "shard_id": f"{'large' if kind == 'large' else 'paired'}-{repetition}",
+        },
+        "environment": {
+            "runner": {"name": f"{'large' if kind == 'large' else 'paired'}-runner-{repetition}"},
+            "python": {"version": "3.10"},
+        },
         "configuration": {
             "segment_counts": segment_counts,
             "repetitions": 1,
@@ -72,12 +85,87 @@ def shard_report(kind: str, repetition: int, *, repetitions: int = 3) -> dict[st
     }
 
 
-class GuiPerformanceInputPlanTests(unittest.TestCase):
+class GuiPerformanceInputPlanTests(TypedTestCase):
     def test_manual_repetition_bounds_create_complete_matrix(self) -> None:
         for repetitions in (1, 3, 10):
             with self.subTest(repetitions=repetitions):
                 values = validate_inputs(str(repetitions), "30", "20", "false")
-                self.assertEqual(values["matrix"], {"repetition": list(range(1, repetitions + 1))})
+                jobs = values["matrix"]["include"]
+                self.assertEqual(len(jobs), repetitions * 2)
+                self.assertEqual(
+                    {(job["suite"], job["segment_count"], job["repetition"]) for job in jobs},
+                    {
+                        (suite, count, index)
+                        for suite, count in (("paired", 3000), ("large", 10000))
+                        for index in range(1, repetitions + 1)
+                    },
+                )
+
+    def test_pull_request_uses_event_base_sha_even_with_manual_reference(self) -> None:
+        with patch("scripts.plan_gui_performance.resolve_commit", return_value=BASELINE_SHA) as resolve:
+            selected = select_comparison_commit(
+                event_name="pull_request",
+                base_sha=BASELINE_SHA,
+                compare_ref="b600e90",
+                repository=ROOT,
+            )
+        self.assertEqual(selected, BASELINE_SHA)
+        resolve.assert_called_once_with(BASELINE_SHA, repository=ROOT)
+
+    def test_manual_comparison_keeps_requested_reference(self) -> None:
+        for reference in ("b600e90", "custom-reference"):
+            with (
+                self.subTest(reference=reference),
+                patch("scripts.plan_gui_performance.resolve_commit", return_value=BASELINE_SHA) as resolve,
+            ):
+                self.assertEqual(
+                    select_comparison_commit(
+                        event_name="workflow_dispatch",
+                        base_sha=CURRENT_SHA,
+                        compare_ref=reference,
+                        repository=ROOT,
+                    ),
+                    BASELINE_SHA,
+                )
+                resolve.assert_called_once_with(reference, repository=ROOT)
+
+    def test_invalid_pr_base_does_not_fall_back_or_write_plan(self) -> None:
+        for base in ("", "main", "b600e90", "x" * 40):
+            with self.subTest(base=base), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "outputs"
+                with redirect_stdout(io.StringIO()), patch("scripts.plan_gui_performance.resolve_commit") as resolve:
+                    status = plan_main(
+                        [
+                            "--event-name",
+                            "pull_request",
+                            "--base-sha",
+                            base,
+                            "--github-output",
+                            str(output),
+                        ]
+                    )
+                self.assertEqual(status, 2)
+                self.assertFalse(output.exists())
+                resolve.assert_not_called()
+
+    def test_pr_base_resolves_to_real_commit_and_unknown_commit_is_rejected(self) -> None:
+        sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+        self.assertEqual(
+            select_comparison_commit(
+                event_name="pull_request",
+                base_sha=sha,
+                compare_ref="b600e90",
+                repository=ROOT,
+            ),
+            sha,
+        )
+        with self.assertRaises(ValueError):
+            select_comparison_commit(
+                event_name="pull_request",
+                base_sha="0" * 40,
+                compare_ref="b600e90",
+                repository=ROOT,
+            )
 
     def test_invalid_manual_inputs_are_rejected(self) -> None:
         invalid = (
@@ -103,7 +191,7 @@ class GuiPerformanceInputPlanTests(unittest.TestCase):
                 parse_args(["--repetitions", "1", "--repetition-index", "4", "--total-repetitions", "3"])
 
 
-class GuiPerformanceAggregationTests(unittest.TestCase):
+class GuiPerformanceAggregationTests(TypedTestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -118,7 +206,9 @@ class GuiPerformanceAggregationTests(unittest.TestCase):
         return paths
 
     def complete_reports(self) -> list[dict[str, object]]:
-        return [shard_report(kind, repetition) for repetition in range(1, 4) for kind in ("current", "baseline")]
+        return [
+            shard_report(kind, repetition) for repetition in range(1, 4) for kind in ("current", "baseline", "large")
+        ]
 
     def test_aggregation_cli_imports_without_site_packages(self) -> None:
         completed = subprocess.run(
@@ -130,7 +220,23 @@ class GuiPerformanceAggregationTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
-    def aggregate(self, reports: list[dict[str, object]]):
+    def test_reference_report_module_imports_without_project_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scripts_dir = Path(directory) / "scripts"
+            scripts_dir.mkdir()
+            (scripts_dir / "__init__.py").touch()
+            shutil.copy2(ROOT / "scripts" / "gui_performance_report.py", scripts_dir)
+            completed = subprocess.run(
+                [sys.executable, "-S", "-c", "from scripts.gui_performance_report import REPORT_SCHEMA_VERSION"],
+                cwd=directory,
+                env={**os.environ, "PYTHONPATH": directory},
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def aggregate(self, reports: list[dict[str, object]]) -> tuple[MergedGuiReport, MergedGuiReport]:
         return aggregate_shards(
             self.write_reports(reports),
             repetitions=3,
@@ -165,13 +271,13 @@ class GuiPerformanceAggregationTests(unittest.TestCase):
         cases["missing"] = complete[:-1]
         cases["duplicate"] = [*complete, copy.deepcopy(complete[0])]
         mismatch = copy.deepcopy(complete)
-        mismatch[0]["configuration"]["playback_seconds"] = 29.0
+        section(mismatch[0], "configuration")["playback_seconds"] = 29.0
         cases["configuration"] = mismatch
         environment = copy.deepcopy(complete)
         environment[1]["environment"] = {"runner": {"name": "different"}}
         cases["environment"] = environment
         provenance = copy.deepcopy(complete)
-        provenance[0]["provenance"]["run_attempt"] = "1"
+        section(provenance[0], "provenance")["run_attempt"] = "1"
         cases["provenance"] = provenance
 
         for name, reports in cases.items():
@@ -197,7 +303,7 @@ class GuiPerformanceAggregationTests(unittest.TestCase):
         reports = self.complete_reports()
         for report in reports:
             if report["revision_label"] == CURRENT_SHA:
-                for run in report["runs"]:
+                for run in entries(report, "runs"):
                     run["scenarios"] = [{"name": name, **scenario(20.0)} for name in SCENARIO_NAMES]
         current, baseline = self.aggregate(reports)
         current_path = self.root / "current.json"
@@ -220,17 +326,17 @@ class GuiPerformanceAggregationTests(unittest.TestCase):
             report_only_status = compare_main(arguments)
             failing_status = compare_main([*arguments, "--fail-on-regression"])
         self.assertEqual(report_only_status, 0)
-        self.assertFalse(json.loads(output_path.read_text(encoding="utf-8"))["passed"])
+        self.assertFalse(object_dict(decode_json(output_path.read_text(encoding="utf-8")))["passed"])
         self.assertEqual(failing_status, 1)
 
     def test_rerun_reuses_successful_shards_and_selects_latest_complete_pair(self) -> None:
         reports = self.complete_reports()
         for report in reports:
-            report["provenance"]["run_attempt"] = "1"
+            section(report, "provenance")["run_attempt"] = "1"
         rerun_current = shard_report("current", 2)
         rerun_baseline = shard_report("baseline", 2)
         for report in (rerun_current, rerun_baseline):
-            report["provenance"]["run_attempt"] = "2"
+            section(report, "provenance")["run_attempt"] = "2"
             report["environment"] = {"runner": {"name": "rerun-runner"}, "python": {"version": "3.10"}}
         reports.extend((rerun_current, rerun_baseline))
 
@@ -241,36 +347,159 @@ class GuiPerformanceAggregationTests(unittest.TestCase):
         self.assertEqual(len(current["runs"]), 6)
         self.assertEqual(len(baseline["runs"]), 3)
 
+    def test_large_only_rerun_keeps_paired_measurements(self) -> None:
+        reports = self.complete_reports()
+        for report in reports:
+            section(report, "provenance")["run_attempt"] = "1"
+        rerun = shard_report("large", 2)
+        reports.append(rerun)
+        current, baseline = self.aggregate(reports)
+        self.assertEqual(current["provenance"]["source_attempts_by_fixture"]["10000"]["2"], 2)
+        self.assertEqual(current["provenance"]["source_attempts_by_fixture"]["3000"]["2"], 1)
+        self.assertEqual(baseline["provenance"]["source_attempts_by_repetition"]["2"], 1)
+        self.assertNotEqual(current["environments_by_fixture"]["3000"], current["environments_by_fixture"]["10000"])
 
-class GuiPerformanceWorkflowContractTests(unittest.TestCase):
+    def test_successful_rerun_supersedes_failed_large_measurement(self) -> None:
+        reports = self.complete_reports()
+        for report in reports:
+            section(report, "provenance")["run_attempt"] = "1"
+        failed = next(report for report in reports if section(report, "configuration")["segment_counts"] == [10000])
+        entries(failed, "runs")[0]["contracts_passed"] = False
+        entries(entries(failed, "runs")[0], "contracts")[0]["passed"] = False
+        reports.append(shard_report("large", 1))
+        current, _ = self.aggregate(reports)
+        self.assertTrue(all(run["contracts_passed"] for run in current["runs"]))
+        self.assertEqual(current["provenance"]["source_attempts_by_fixture"]["10000"]["1"], 2)
+
+    def test_missing_large_and_incomplete_new_pair_cannot_pass(self) -> None:
+        reports = self.complete_reports()
+        missing = [report for report in reports if section(report, "configuration")["segment_counts"] != [10000]]
+        with self.assertRaisesRegex(ReportValidationError, "missing large"):
+            self.aggregate(missing)
+        for report in reports:
+            section(report, "provenance")["run_attempt"] = "1"
+        reports.append(shard_report("current", 2))
+        with self.assertRaisesRegex(ReportValidationError, "incomplete latest"):
+            self.aggregate(reports)
+
+    def test_large_contract_failure_or_wrong_suite_is_rejected(self) -> None:
+        for failure in ("contract", "suite"):
+            reports = self.complete_reports()
+            large = next(report for report in reports if section(report, "configuration")["segment_counts"] == [10000])
+            if failure == "contract":
+                entries(large, "runs")[0]["contracts_passed"] = False
+            else:
+                section(large, "provenance")["shard_id"] = "paired-1"
+            with self.subTest(failure=failure), self.assertRaises(ReportValidationError):
+                self.aggregate(reports)
+
+
+class SharedBenchmarkMediaTests(TypedTestCase):
+    def test_pair_reuses_media_but_keeps_project_and_result_files_separate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            encodes: list[list[str]] = []
+            workers: list[Path] = []
+
+            def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                if command[0] == "ffmpeg":
+                    encodes.append(command)
+                    Path(command[-1]).write_bytes(b"test media")
+                else:
+                    project = Path(command[command.index("--project") + 1])
+                    workers.append(project)
+                    output = Path(command[command.index("--worker-output") + 1])
+                    output.write_text(json.dumps(raw_run(3000, 1)), encoding="utf-8")
+                return subprocess.CompletedProcess(command, 0)
+
+            with (
+                patch("scripts.generate_large_gui_fixture.shutil.which", return_value="ffmpeg"),
+                patch("subprocess.run", side_effect=run),
+                patch("scripts.run_gui_performance.environment_info", return_value=dict[str, object]()),
+                redirect_stdout(io.StringIO()),
+            ):
+                for kind in ("current", "reference"):
+                    args = parse_args(
+                        [
+                            "--segment-count",
+                            "3000",
+                            "--repetitions",
+                            "1",
+                            "--media-dir",
+                            str(root / "media"),
+                            "--fixture-dir",
+                            str(root / kind),
+                            "--output",
+                            str(root / f"{kind}.json"),
+                        ]
+                    )
+                    self.assertEqual(_run_controller(args), 0)
+            self.assertEqual(len(encodes), 1)
+            self.assertEqual(len(workers), 2)
+            self.assertNotEqual(workers[0].parent, workers[1].parent)
+            self.assertTrue((root / "current.json").is_file())
+            self.assertTrue((root / "reference.json").is_file())
+
+
+class GuiPerformanceWorkflowContractTests(TypedTestCase):
     def test_workflow_pairs_revisions_in_repetition_matrix_and_has_strict_gate(self) -> None:
         workflow = load_workflow(WORKFLOW)
-        jobs = workflow["jobs"]
-        benchmark = jobs["benchmark"]
-        aggregate = jobs["aggregate"]
+        jobs = section(workflow, "jobs")
+        benchmark = section(jobs, "benchmark")
+        aggregate = section(jobs, "aggregate")
 
-        self.assertEqual(benchmark["strategy"]["fail-fast"], False)
-        self.assertEqual(benchmark["strategy"]["max-parallel"], 3)
+        self.assertEqual(section(benchmark, "strategy")["fail-fast"], False)
+        self.assertEqual(section(benchmark, "strategy")["max-parallel"], 6)
         self.assertEqual(benchmark["needs"], "prepare")
         self.assertNotIn("continue-on-error", str(workflow))
-        benchmark_commands = "\n".join(str(step.get("run", "")) for step in benchmark["steps"])
+        benchmark_steps = entries(benchmark, "steps")
+        benchmark_commands = "\n".join(str(step.get("run", "")) for step in benchmark_steps)
         self.assertIn("--repetitions 1", benchmark_commands)
         self.assertIn("--repetition-index", benchmark_commands)
-        self.assertIn("--segment-count 10000", benchmark_commands)
+        self.assertIn("--segment-count ${{ matrix.segment_count }}", benchmark_commands)
+        reference = next(step for step in benchmark_steps if str(step["name"]).startswith("Run reference"))
+        self.assertIn("matrix.suite == 'paired'", str(reference["if"]))
+        self.assertIn("--segment-count 3000", str(reference["run"]))
+        self.assertEqual(benchmark_commands.count('--media-dir "$env:RUNNER_TEMP/gui-performance-media"'), 2)
+        upload = next(step for step in benchmark_steps if step["name"] == "Upload shard reports")
+        self.assertIn("${{ matrix.suite }}", str(section(upload, "with")["name"]))
         self.assertIn("--no-enforce-contracts", benchmark_commands)
         self.assertIn(
             'Copy-Item scripts/gui_performance_report.py "$referenceRoot/scripts/gui_performance_report.py"',
             benchmark_commands,
         )
-        self.assertEqual(set(aggregate["needs"]), {"prepare", "benchmark"})
-        self.assertIn("always()", aggregate["if"])
-        aggregate_commands = "\n".join(str(step.get("run", "")) for step in aggregate["steps"])
+        self.assertIn(
+            'Copy-Item src/data_boundary.py "$referenceRoot/src/data_boundary.py"',
+            benchmark_commands,
+        )
+        self.assertIn(
+            'Copy-Item tests/qt_property_value.py "$referenceRoot/tests/qt_property_value.py"',
+            benchmark_commands,
+        )
+        needs = aggregate["needs"]
+        if not is_string_list(needs):
+            raise AssertionError("aggregate needs must be an array of strings")
+        self.assertEqual(set(needs), {"prepare", "benchmark"})
+        self.assertIn("always()", str(aggregate["if"]))
+        aggregate_commands = "\n".join(str(step.get("run", "")) for step in entries(aggregate, "steps"))
         self.assertIn("aggregate_gui_performance.py", aggregate_commands)
         self.assertIn("BENCHMARK_JOB_RESULT", aggregate_commands)
         self.assertIn("compare_gui_performance.py", aggregate_commands)
 
+    def test_workflow_passes_frozen_pr_base_and_keeps_manual_reference(self) -> None:
+        workflow = load_workflow(WORKFLOW)
+        plan = next(step for step in entries(section(section(workflow, "jobs"), "prepare"), "steps") if step.get("id") == "plan")
+        self.assertEqual(section(plan, "env")["BENCHMARK_EVENT_NAME"], "${{ github.event_name }}")
+        self.assertEqual(section(plan, "env")["BENCHMARK_BASE_SHA"], "${{ github.event.pull_request.base.sha }}")
+        self.assertIn('--event-name "$BENCHMARK_EVENT_NAME"', str(plan["run"]))
+        self.assertIn('--base-sha "$BENCHMARK_BASE_SHA"', str(plan["run"]))
+        self.assertEqual(section(section(section(section(workflow, "on"), "workflow_dispatch"), "inputs"), "compare_ref")["default"], "b600e90")
+
     def test_workflow_tracks_pipeline_code_and_tests(self) -> None:
-        paths = set(load_workflow(WORKFLOW)["on"]["pull_request"]["paths"])
+        paths_value = section(section(load_workflow(WORKFLOW), "on"), "pull_request")["paths"]
+        if not is_string_list(paths_value):
+            raise AssertionError("pull request paths must be an array of strings")
+        paths = set(paths_value)
         for expected in (
             "scripts/aggregate_gui_performance.py",
             "scripts/gui_performance_report.py",

@@ -4,9 +4,10 @@ import unittest
 
 from src.runtime_settings import settings_from_config
 from src.subtitle_workflow import _transcribe_options_with_cli_overrides
+from tests.typed_case import TypedTestCase
 
 
-class SubtitleWorkflowRuntimeSettingsTests(unittest.TestCase):
+class SubtitleWorkflowRuntimeSettingsTests(TypedTestCase):
     def test_transcribe_options_use_typed_settings_by_default(self) -> None:
         settings = settings_from_config(
             {

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import TYPE_CHECKING, ParamSpec, TypedDict
 
 from .ai_provider import (
     AIProvider,
@@ -13,12 +14,38 @@ from .ai_provider import (
     AIProviderSession,
     AIProviderState,
 )
-from .codex_ai_provider import CodexAIProvider
+from .codex_ai_provider import CodexAIProvider, CodexAppServerClientProtocol
 from .codex_runtime import redact_codex_diagnostic
+
+if TYPE_CHECKING:
+    from typing_extensions import Unpack
 
 
 class CodexChatError(RuntimeError):
     pass
+
+
+_CallbackParams = ParamSpec("_CallbackParams")
+
+
+class _SnapshotChanges(TypedDict, total=False):
+    connection_state: str
+    auth_state: str
+    auth_label: str
+    chat_state: str
+    login_url: str
+    login_id: str
+    models: tuple[Mapping[str, object], ...]
+    selected_model: str
+    model_error: str
+    thread_id: str
+    turn_id: str
+    messages: tuple[Mapping[str, object], ...]
+    error: str
+    provider_id: str
+    provider_name: str
+    model_selection_supported: bool
+    login_available: bool
 
 
 @dataclass(frozen=True)
@@ -29,12 +56,12 @@ class CodexChatSnapshot:
     chat_state: str = "idle"
     login_url: str = ""
     login_id: str = ""
-    models: tuple[Mapping[str, Any], ...] = ()
+    models: tuple[Mapping[str, object], ...] = ()
     selected_model: str = ""
     model_error: str = ""
     thread_id: str = ""
     turn_id: str = ""
-    messages: tuple[Mapping[str, Any], ...] = ()
+    messages: tuple[Mapping[str, object], ...] = ()
     error: str = ""
     # Provider metadata is appended to preserve the original positional
     # snapshot constructor used by existing integrations/tests.
@@ -50,7 +77,7 @@ class CodexChatController:
     def __init__(
         self,
         *,
-        client_factory: Callable[[], Any] | None = None,
+        client_factory: Callable[[], CodexAppServerClientProtocol] | None = None,
         provider_factory: Callable[[], AIProvider] | None = None,
         workspace_root: str | Path,
         preferred_model: str = "",
@@ -138,21 +165,22 @@ class CodexChatController:
                 return
         self._preferred_model = selected
         self._update(selected_model=selected, model_error="", error="")
-        if self.on_selected_model is not None:
-            self._dispatch(lambda: self.on_selected_model(selected))
+        selected_model_callback = self.on_selected_model
+        if selected_model_callback is not None:
+            self._dispatch(lambda: selected_model_callback(selected))
 
-    def send_message(self, text: str) -> None:
+    def send_message(self, text: str) -> bool:
         prompt = str(text).strip()
         if not prompt:
             self._update(error="メッセージを入力してください")
-            return
+            return False
         snapshot = self.snapshot
         if snapshot.auth_state != "authenticated":
             self._update(error=f"{self.provider_name}へログインしてからメッセージを送信してください")
-            return
+            return False
         if snapshot.chat_state in {"sending", "streaming", "stopping"}:
             self._update(error=f"{self.provider_name}の応答が完了してから次のメッセージを送信してください")
-            return
+            return False
         available = {str(item["id"]) for item in snapshot.models}
         if snapshot.model_selection_supported and (
             not snapshot.selected_model or snapshot.selected_model not in available
@@ -161,7 +189,7 @@ class CodexChatController:
                 model_error=f"利用可能な{self.provider_name}モデルを選択してください",
                 error=f"利用可能な{self.provider_name}モデルを選択してください",
             )
-            return
+            return False
         with self._lock:
             self._stop_requested = False
         self._message_sequence += 1
@@ -178,6 +206,7 @@ class CodexChatController:
         )
         self._update(messages=tuple(messages), chat_state="sending", error="")
         self._submit(self._send_worker, prompt, snapshot.selected_model)
+        return True
 
     def begin_proposal(
         self,
@@ -304,11 +333,16 @@ class CodexChatController:
         self._executor.shutdown(wait=False, cancel_futures=True)
         self._interrupt_executor.shutdown(wait=False, cancel_futures=True)
 
-    def _submit(self, callback: Callable[..., None], *args: Any) -> None:
+    def _submit(
+        self,
+        callback: Callable[_CallbackParams, None],
+        *args: _CallbackParams.args,
+        **kwargs: _CallbackParams.kwargs,
+    ) -> None:
         with self._lock:
             if self._shutdown:
                 return
-        self._executor.submit(callback, *args)
+        self._executor.submit(callback, *args, **kwargs)
 
     def _connect_worker(self, force: bool) -> None:
         old_provider: AIProvider | None = None
@@ -334,9 +368,9 @@ class CodexChatController:
             self._apply_provider_state(state)
         except Exception as error:
             with self._lock:
-                provider = self._provider
+                failed_provider = self._provider
                 self._provider = None
-            self._close_provider(provider)
+            self._close_provider(failed_provider)
             message = f"{self.provider_name}へ接続できません: {self._safe_error(error)}"
             self._update(
                 connection_state="error",
@@ -439,7 +473,7 @@ class CodexChatController:
                 "stopping",
             }:
                 raise CodexChatError(f"{self.provider_name} turn IDが返されませんでした")
-            changes: dict[str, Any] = {"thread_id": thread_id}
+            changes: _SnapshotChanges = {"thread_id": thread_id}
             if effective_turn_id and current.chat_state in {"sending", "streaming", "stopping"}:
                 changes["turn_id"] = effective_turn_id
             if current.chat_state == "sending":
@@ -603,9 +637,7 @@ class CodexChatController:
                     error=f"{self.provider_name}の応答に失敗しました: {event.error}",
                 )
             else:
-                self._finish_active_assistant(
-                    "interrupted" if event.status == "interrupted" else "completed"
-                )
+                self._finish_active_assistant("interrupted" if event.status == "interrupted" else "completed")
                 self._update(chat_state="idle", turn_id="", error="")
 
     def _on_disconnect(self, _error: object) -> None:
@@ -640,7 +672,7 @@ class CodexChatController:
         connection_state = "ready" if state.availability == "available" else state.availability
         models = tuple(model.as_mapping() for model in state.models)
         model_error = state.error if state.auth_state == "authenticated" else ""
-        changes: dict[str, Any] = {
+        changes: _SnapshotChanges = {
             "connection_state": connection_state,
             "auth_state": state.auth_state,
             "auth_label": state.auth_label,
@@ -670,8 +702,9 @@ class CodexChatController:
             )
         self._preferred_model = state.selected_model or self._preferred_model
         self._update(**changes)
-        if state.auth_state == "authenticated" and state.selected_model and self.on_selected_model is not None:
-            self._dispatch(lambda: self.on_selected_model(state.selected_model))
+        selected_model_callback = self.on_selected_model
+        if state.auth_state == "authenticated" and state.selected_model and selected_model_callback is not None:
+            self._dispatch(lambda: selected_model_callback(state.selected_model))
 
     @staticmethod
     def _safe_error(error: object) -> str:
@@ -716,12 +749,13 @@ class CodexChatController:
         with self._lock:
             self._active_assistant_id = ""
 
-    def _update(self, **changes: Any) -> None:
+    def _update(self, **changes: Unpack[_SnapshotChanges]) -> None:
         with self._lock:
             self._snapshot = replace(self._snapshot, **changes)
             snapshot = self._snapshot
-        if self.on_state is not None:
-            self._dispatch(lambda: self.on_state(snapshot))
+        state_callback = self.on_state
+        if state_callback is not None:
+            self._dispatch(lambda: state_callback(snapshot))
 
     def _dispatch(self, callback: Callable[[], None]) -> None:
         try:

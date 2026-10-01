@@ -6,9 +6,10 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Mapping
 
 from .application_logging import redact_text
+from .process_utils import VersionProbeRun, hidden_subprocess_kwargs
 
 
 CODEX_MIN_VERSION = (0, 1, 0)
@@ -60,7 +61,7 @@ def detect_codex(
     *,
     environment: Mapping[str, str] | None = None,
     which: Callable[[str], str | None] = shutil.which,
-    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    run: VersionProbeRun = subprocess.run,
 ) -> CodexRuntimeInfo:
     env = dict(os.environ if environment is None else environment)
     candidates: list[str] = []
@@ -95,9 +96,9 @@ def detect_codex(
                 timeout=5,
                 check=False,
                 shell=False,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                creationflags=hidden_subprocess_kwargs().get("creationflags", 0),
             )
-        except (OSError, subprocess.TimeoutExpired) as error:
+        except (OSError, subprocess.TimeoutExpired):
             continue
         output_lines = [
             line.strip()
@@ -153,8 +154,11 @@ def _codex_desktop_executables(environment: Mapping[str, str]) -> list[str]:
         except OSError:
             return -1
 
+    def sort_key(path: Path) -> tuple[int, str]:
+        return modified_time(path), str(path).casefold()
+
     executables.sort(
-        key=lambda path: (modified_time(path), str(path).casefold()),
+        key=sort_key,
         reverse=True,
     )
     return [str(path) for path in executables]
@@ -173,7 +177,7 @@ def _parse_codex_version(value: str) -> tuple[int, int, int] | None:
     match = _CODEX_VERSION_PATTERN.search(value)
     if match is None:
         return None
-    return tuple(int(group or 0) for group in match.groups())  # type: ignore[return-value]
+    return (int(match.group(1) or 0), int(match.group(2) or 0), int(match.group(3) or 0))
 
 
 def _is_supported_codex_version(version: tuple[int, int, int]) -> bool:
@@ -188,4 +192,3 @@ def build_codex_diagnostic(info: CodexRuntimeInfo) -> dict[str, str | bool]:
         "executable": redact_codex_diagnostic(info.executable),
         "error": redact_codex_diagnostic(info.error),
     }
-

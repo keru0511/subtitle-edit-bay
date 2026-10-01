@@ -3,18 +3,30 @@ from __future__ import annotations
 import sys
 import time
 import unittest
+from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 from src.gemini_acp_provider import GeminiAcpClient, GeminiAcpProvider
-from src.gui import EditBayBackend
+from src.gui_ai_facade import AIChatFacade
 from src.gui_ai_chat_state import AIProviderChatRouter
 from src.gui_codex_chat_state import CodexChatController, CodexChatSnapshot
+from tests.typed_case import TypedTestCase
 
 
 ROOT = Path(__file__).resolve().parents[1]
 FAKE_GEMINI = ROOT / "tests" / "fake_gemini_acp_server.py"
+
+
+def _facade_property_value(name: str, receiver: object) -> object:
+    descriptor = cast(object, getattr(AIChatFacade, name))
+    getter = cast(object, getattr(descriptor, "fget", None))
+    if not callable(getter):
+        raise AssertionError(f"{name} has no getter")
+    return cast(Callable[[object], object], getter)(receiver)
 
 
 class StubChatController:
@@ -40,22 +52,14 @@ class StubChatController:
         self.login_calls += 1
 
     def logout(self) -> None:
-        self._snapshot = CodexChatSnapshot(
-            **{**self._snapshot.__dict__, "auth_state": "unauthenticated", "messages": ()}
-        )
+        self._snapshot = replace(self._snapshot, auth_state="unauthenticated", messages=())
 
     def select_model(self, model_id: str) -> None:
-        self._snapshot = CodexChatSnapshot(
-            **{**self._snapshot.__dict__, "selected_model": model_id}
-        )
+        self._snapshot = replace(self._snapshot, selected_model=model_id)
 
-    def send_message(self, text: str) -> None:
-        self._snapshot = CodexChatSnapshot(
-            **{
-                **self._snapshot.__dict__,
-                "messages": self._snapshot.messages + (("text", text),),
-            }
-        )
+    def send_message(self, text: str) -> bool:
+        self._snapshot = replace(self._snapshot, messages=self._snapshot.messages + ({"text": text},))
+        return True
 
     def begin_proposal(self, text: str, **kwargs: object) -> bool:
         del kwargs
@@ -69,14 +73,10 @@ class StubChatController:
         del message, cancelled
 
     def interrupt(self) -> None:
-        self._snapshot = CodexChatSnapshot(
-            **{**self._snapshot.__dict__, "chat_state": "idle"}
-        )
+        self._snapshot = replace(self._snapshot, chat_state="idle")
 
     def new_chat(self) -> None:
-        self._snapshot = CodexChatSnapshot(
-            **{**self._snapshot.__dict__, "messages": (), "thread_id": ""}
-        )
+        self._snapshot = replace(self._snapshot, messages=(), thread_id="")
 
     def shutdown(self) -> None:
         self.shutdown_calls += 1
@@ -88,7 +88,7 @@ def snapshot(
     *,
     connection_state: str = "ready",
     auth_state: str = "authenticated",
-    messages: tuple[object, ...] = (),
+    messages: tuple[Mapping[str, object], ...] = (),
     chat_state: str = "idle",
     models: tuple[dict[str, str], ...] = (),
     model_selection_supported: bool = True,
@@ -109,7 +109,7 @@ def snapshot(
     )
 
 
-def wait_for(predicate, timeout: float = 3.0) -> None:
+def wait_for(predicate: Callable[[], bool], timeout: float = 3.0) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
         if predicate():
@@ -119,13 +119,13 @@ def wait_for(predicate, timeout: float = 3.0) -> None:
         raise AssertionError("condition was not reached")
 
 
-class AIProviderChatRouterTests(unittest.TestCase):
+class AIProviderChatRouterTests(TypedTestCase):
     def setUp(self) -> None:
         self.codex = StubChatController(
             snapshot(
                 "codex",
                 "Codex",
-                messages=(("provider", "codex"),),
+                messages=({"provider": "codex"},),
                 models=({"id": "gpt", "label": "GPT"},),
                 selected_model="gpt",
             )
@@ -134,7 +134,7 @@ class AIProviderChatRouterTests(unittest.TestCase):
             snapshot(
                 "gemini",
                 "Gemini",
-                messages=(("provider", "gemini"),),
+                messages=({"provider": "gemini"},),
                 models=(),
                 model_selection_supported=False,
                 login_available=False,
@@ -154,13 +154,13 @@ class AIProviderChatRouterTests(unittest.TestCase):
             [item["id"] for item in self.router.available_providers()],
             ["codex", "gemini"],
         )
-        self.assertEqual(self.router.snapshot.messages, (("provider", "codex"),))
+        self.assertEqual(self.router.snapshot.messages, ({"provider": "codex"},))
 
         self.assertTrue(self.router.select_provider("gemini"))
         self.assertEqual(self.selected, ["gemini"])
-        self.assertEqual(self.router.snapshot.messages, (("provider", "gemini"),))
+        self.assertEqual(self.router.snapshot.messages, ({"provider": "gemini"},))
         self.assertFalse(self.router.select_provider("codex") is False)
-        self.assertEqual(self.router.snapshot.messages, (("provider", "codex"),))
+        self.assertEqual(self.router.snapshot.messages, ({"provider": "codex"},))
 
     def test_active_turn_blocks_provider_switch(self) -> None:
         self.codex._snapshot = snapshot("codex", "Codex", chat_state="streaming")
@@ -190,22 +190,25 @@ class AIProviderChatRouterTests(unittest.TestCase):
         self.assertEqual(self.router.snapshot.selected_model, "gpt")
 
 
-class GeminiAuthHintTests(unittest.TestCase):
+class GeminiAuthHintTests(TypedTestCase):
     @staticmethod
     def _hint(*, auth_state: str, login_available: bool) -> str:
-        backend = SimpleNamespace(
-            _ai_chat=SimpleNamespace(
-                snapshot=CodexChatSnapshot(
-                    provider_id="gemini",
-                    provider_name="Gemini",
-                    auth_state=auth_state,
-                    login_available=login_available,
+        facade = SimpleNamespace(
+            services=SimpleNamespace(
+                chat_router=SimpleNamespace(
+                    snapshot=CodexChatSnapshot(
+                        provider_id="gemini",
+                        provider_name="Gemini",
+                        auth_state=auth_state,
+                        login_available=login_available,
+                    )
                 )
             )
         )
-        getter = EditBayBackend.aiChatAuthHint.fget
-        assert getter is not None
-        return getter(backend)
+        value = _facade_property_value("aiChatAuthHint", facade)
+        if not isinstance(value, str):
+            raise AssertionError("auth hint must be a string")
+        return value
 
     def test_authenticated_gemini_without_login_action_has_no_auth_hint(self) -> None:
         self.assertEqual(
@@ -220,37 +223,38 @@ class GeminiAuthHintTests(unittest.TestCase):
         )
 
     def test_unauthenticated_gemini_with_login_action_exposes_generic_login_route(self) -> None:
-        backend = SimpleNamespace(
-            _ai_chat=SimpleNamespace(
-                snapshot=CodexChatSnapshot(
-                    provider_id="gemini",
-                    provider_name="Gemini",
-                    auth_state="unauthenticated",
-                    login_available=True,
+        facade = SimpleNamespace(
+            services=SimpleNamespace(
+                chat_router=SimpleNamespace(
+                    snapshot=CodexChatSnapshot(
+                        provider_id="gemini",
+                        provider_name="Gemini",
+                        auth_state="unauthenticated",
+                        login_available=True,
+                    )
                 )
             )
         )
-        login_available = EditBayBackend.aiChatLoginAvailable.fget
-        assert login_available is not None
-        self.assertTrue(login_available(backend))
+        self.assertTrue(_facade_property_value("aiChatLoginAvailable", facade))
         self.assertEqual(self._hint(auth_state="unauthenticated", login_available=True), "")
 
 
-class GeminiProviderFactoryTests(unittest.TestCase):
+class GeminiProviderFactoryTests(TypedTestCase):
     def test_factory_passes_saved_model_to_gemini_provider(self) -> None:
+        settings: dict[str, object] = {"gemini_model": "gemini-saved"}
         backend = SimpleNamespace(
             workspace_root=ROOT,
-            _settings={"gemini_model": "gemini-saved"},
+            _settings=settings,
         )
-        with patch("src.gui.GeminiAcpProvider") as provider_class:
-            EditBayBackend._create_gemini_chat_provider(backend)
+        with patch("src.gui_ai_facade.GeminiAcpProvider") as provider_class:
+            AIChatFacade._create_gemini_chat_provider(cast(AIChatFacade, SimpleNamespace(_backend=backend)))
         provider_class.assert_called_once_with(
             workspace_root=ROOT,
             preferred_model="gemini-saved",
         )
 
 
-class GeminiRouterFakeAcpE2ETests(unittest.TestCase):
+class GeminiRouterFakeAcpE2ETests(TypedTestCase):
     def test_gemini_chat_controller_streams_through_provider_router(self) -> None:
         provider = GeminiAcpProvider(
             workspace_root=ROOT,
@@ -285,10 +289,8 @@ class GeminiRouterFakeAcpE2ETests(unittest.TestCase):
             self.assertEqual(router.snapshot.provider_name, "Gemini")
             self.assertEqual(router.snapshot.auth_state, "authenticated")
             self.assertFalse(router.snapshot.login_available)
-            backend = SimpleNamespace(_ai_chat=router)
-            getter = EditBayBackend.aiChatAuthHint.fget
-            assert getter is not None
-            self.assertEqual(getter(backend), "")
+            facade = SimpleNamespace(services=SimpleNamespace(chat_router=router))
+            self.assertEqual(_facade_property_value("aiChatAuthHint", facade), "")
             self.assertTrue(router.snapshot.model_selection_supported)
             self.assertEqual(router.snapshot.selected_model, "router-model")
             self.assertEqual([item["id"] for item in router.snapshot.models], ["router-model"])

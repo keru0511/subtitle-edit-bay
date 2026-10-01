@@ -1,27 +1,55 @@
 from __future__ import annotations
 
-from functools import lru_cache
-from typing import Any
+from collections.abc import Callable, Iterable
+from typing import Protocol
+
+from ..typed_cache import typed_lru_cache
+
+
+class ChunkParser(Protocol):
+    def parse(self, text: str, /) -> Iterable[str]: ...
+
+
+class MorphemeToken(Protocol):
+    @property
+    def surface(self) -> str: ...
+
+
+class MorphemeTokenizer(Protocol):
+    def tokenize(self, text: str, /) -> Iterable[MorphemeToken]: ...
+
+
+class _BudouxModule(Protocol):
+    def load_default_japanese_parser(self) -> ChunkParser: ...
+
+
+budoux: _BudouxModule | None
+JanomeTokenizer: Callable[[], MorphemeTokenizer] | None
+
 
 try:
-    import budoux  # type: ignore
+    import budoux as _budoux
+
+    budoux = _budoux
 except ImportError:  # pragma: no cover - depends on optional runtime package
     budoux = None
 
 try:
-    from janome.tokenizer import Tokenizer as JanomeTokenizer  # type: ignore
+    from janome.tokenizer import Tokenizer as _JanomeTokenizer
+
+    JanomeTokenizer = _JanomeTokenizer
 except ImportError:  # pragma: no cover - depends on optional runtime package
     JanomeTokenizer = None
 
 
-@lru_cache(maxsize=1)
-def create_budoux_parser() -> Any | None:
+@typed_lru_cache(maxsize=1)
+def create_budoux_parser() -> ChunkParser | None:
     if budoux is None:
         return None
     return budoux.load_default_japanese_parser()
 
 
-def parse_budoux_chunks(text: str, parser: Any | None = None) -> list[str]:
+def parse_budoux_chunks(text: str, parser: ChunkParser | None = None) -> list[str]:
     resolved_parser = create_budoux_parser() if parser is None else parser
     if resolved_parser is None or not text:
         return [text] if text else []
@@ -29,14 +57,14 @@ def parse_budoux_chunks(text: str, parser: Any | None = None) -> list[str]:
     return chunks or [text]
 
 
-@lru_cache(maxsize=1)
-def create_janome_tokenizer() -> Any | None:
+@typed_lru_cache(maxsize=1)
+def create_janome_tokenizer() -> MorphemeTokenizer | None:
     if JanomeTokenizer is None:
         return None
     return JanomeTokenizer()
 
 
-def parse_morpheme_chunks(text: str, tokenizer: Any | None = None) -> list[str]:
+def parse_morpheme_chunks(text: str, tokenizer: MorphemeTokenizer | None = None) -> list[str]:
     resolved_tokenizer = create_janome_tokenizer() if tokenizer is None else tokenizer
     if resolved_tokenizer is None or not text:
         return [text] if text else []

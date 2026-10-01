@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import shutil
 import subprocess
@@ -10,9 +11,12 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Protocol, cast
 
+from . import platform_updates
+from .platform_updates import installer_asset_name
 from .application_info import normalize_version, resolve_application_version
+from .data_boundary import coerce_int, decode_json, is_object_list, is_object_mapping
 
 GITHUB_API_HOST = "api.github.com"
 DEFAULT_OWNER = "keru0511"
@@ -36,6 +40,29 @@ class UpdateInfo:
     checksum_url: str = ""
     manifest_url: str = ""
     package_type: str = "archive"
+
+
+class _BinaryResponse(Protocol):
+    def read(self, size: int = -1) -> bytes: ...
+
+    def __enter__(self) -> _BinaryResponse: ...
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> bool | None: ...
+
+
+@dataclass
+class _UpdaterArgs(argparse.Namespace):
+    command: str | None = None
+    archive_url: str = ""
+    project_root: str = ""
+
+
+def require_supported_update() -> None:
+    """OS境界の拒否理由を更新処理のエラーとして返す。"""
+    try:
+        platform_updates.require_supported_update()
+    except ValueError as error:
+        raise UpdaterError(str(error)) from error
 
 
 def _version_tuple(value: str) -> tuple[int, ...]:
@@ -70,16 +97,20 @@ def fetch_latest_release(
     timeout: float = 15.0,
 ) -> UpdateInfo:
     """Fetch the latest GitHub release for this application."""
+    require_supported_update()
     current = resolve_application_version(project_root)
     url = f"https://{GITHUB_API_HOST}/repos/{owner}/{repo}/releases/latest"
     request = urllib.request.Request(url, headers={"User-Agent": f"{repo}-updater"})
 
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            data = json.loads(response.read().decode("utf-8"))
+        opened = cast(_BinaryResponse, urllib.request.urlopen(request, timeout=timeout))
+        with opened as response:
+            data = decode_json(response.read().decode("utf-8"))
     except (OSError, urllib.error.URLError, json.JSONDecodeError) as error:
         raise UpdaterError(f"リリース情報を取得できません: {error}") from error
 
+    if not is_object_mapping(data):
+        raise UpdaterError("リリース情報の形式が不正です")
     tag = str(data.get("tag_name", "")).strip()
     if not tag:
         raise UpdaterError("リリースタグが見つかりません")
@@ -93,26 +124,26 @@ def fetch_latest_release(
     manifest_url = ""
     package_type = "archive"
     assets = data.get("assets", [])
-    if isinstance(assets, list):
+    supported_installer = installer_asset_name()
+    if is_object_list(assets) and supported_installer:
         installer_asset = next(
             (
                 asset
                 for asset in assets
-                if isinstance(asset, dict)
-                and str(asset.get("name", "")).lower() == "subtitleeditbay-setup.exe"
+                if is_object_mapping(asset) and str(asset.get("name", "")).lower() == supported_installer.lower()
             ),
             None,
         )
         if installer_asset:
             download_url = str(installer_asset.get("browser_download_url", ""))
-            package_size = int(installer_asset.get("size", 0) or 0)
+            package_size = coerce_int(installer_asset.get("size", 0) or 0)
             package_type = "installer"
             installer_name = str(installer_asset.get("name", "SubtitleEditBay-Setup.exe"))
             checksum_asset = next(
                 (
                     asset
                     for asset in assets
-                    if isinstance(asset, dict)
+                    if is_object_mapping(asset)
                     and str(asset.get("name", "")).lower() == f"{installer_name}.sha256".lower()
                 ),
                 None,
@@ -121,7 +152,7 @@ def fetch_latest_release(
                 (
                     asset
                     for asset in assets
-                    if isinstance(asset, dict)
+                    if is_object_mapping(asset)
                     and str(asset.get("name", "")).lower() == f"{installer_name}.manifest.json".lower()
                 ),
                 None,
@@ -171,21 +202,24 @@ def _load_manifest(project_root: Path) -> set[str]:
     if not manifest_path.is_file():
         return set()
     try:
-        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        data = decode_json(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return set()
-    if isinstance(data, list):
+    if is_object_list(data):
         return {str(entry) for entry in data}
-    if isinstance(data, dict) and isinstance(data.get("files"), list):
-        return {str(entry) for entry in data["files"]}
+    if is_object_mapping(data):
+        files = data.get("files")
+        if is_object_list(files):
+            return {str(entry) for entry in files}
     return set()
 
 
 def _write_manifest(project_root: Path, files: set[str]) -> None:
     manifest_path = project_root / ".local" / "update-manifest.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    ordered_files: list[str] = sorted(files)
     manifest_path.write_text(
-        json.dumps(sorted(files), ensure_ascii=False) + "\n",
+        json.dumps(ordered_files, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
 
@@ -207,10 +241,11 @@ def apply_zip_update(
     Returns the backup root path and the set of installed relative file paths.
     Raises UpdaterError on failure after restoring the previous state.
     """
+    require_supported_update()
     import tempfile
 
     project_root = project_root.resolve()
-    current_version = resolve_application_version(project_root)
+    resolve_application_version(project_root)
     previous_manifest = _load_manifest(project_root)
     backup_root = project_root / ".local" / "update_backups" / "pending"
     if backup_root.exists():
@@ -229,7 +264,8 @@ def apply_zip_update(
             else:
                 zip_path = temp_root / "latest.zip"
                 request = urllib.request.Request(archive_url, headers={"User-Agent": "subtitle-edit-bay-updater"})
-                with urllib.request.urlopen(request, timeout=timeout) as response:
+                opened = cast(_BinaryResponse, urllib.request.urlopen(request, timeout=timeout))
+                with opened as response:
                     zip_path.write_bytes(response.read())
 
             extract_root = temp_root / "extracted"
@@ -376,6 +412,7 @@ def _restore_update_state(
 
 def launch_update_script(project_root: Path, archive_url: str | None = None) -> list[str]:
     """Build the command to launch the platform update script."""
+    require_supported_update()
     update_script = project_root / "scripts" / "update.ps1"
     if sys.platform == "win32" and shutil.which("powershell.exe"):
         command = [
@@ -393,14 +430,12 @@ def launch_update_script(project_root: Path, archive_url: str | None = None) -> 
 
 
 def main(argv: list[str] | None = None) -> int:
-    import argparse
-
     parser = argparse.ArgumentParser(description="Subtitle Edit Bay updater")
     subparsers = parser.add_subparsers(dest="command")
     apply_parser = subparsers.add_parser("apply")
     apply_parser.add_argument("--archive-url", required=True)
     apply_parser.add_argument("--project-root", default=str(Path.cwd()))
-    args = parser.parse_args(argv)
+    args = parser.parse_args(argv, namespace=_UpdaterArgs())
     if args.command == "apply":
         try:
             apply_zip_update(Path(args.project_root), args.archive_url)

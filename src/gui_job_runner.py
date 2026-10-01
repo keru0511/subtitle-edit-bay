@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import os
-import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, Signal
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer
 
+from .qt_decorators import Signal
+from .process_utils import stop_process
 from .processing_progress import parse_progress_events
 from .qprocess_launcher import prepare_qprocess_launch
 
@@ -22,9 +23,14 @@ class GuiJobRunner(QObject):
 
     started = Signal()
     outputReceived = Signal(str)
-    machineProgress = Signal(object)
-    finished = Signal(int, object)
-    errorOccurred = Signal(object)
+    if TYPE_CHECKING:
+        machineProgress = Signal(dict[str, object])
+        finished = Signal(int, QProcess.ExitStatus)
+        errorOccurred = Signal(QProcess.ProcessError)
+    else:
+        machineProgress = Signal(object)
+        finished = Signal(int, object)
+        errorOccurred = Signal(object)
     terminal = Signal(str, int, str)
     launchPreparationFailed = Signal(str)
 
@@ -108,22 +114,12 @@ class GuiJobRunner(QObject):
         expected_process_id = self.process_id
         expected_job_id = self._active_job_id
         self._cancel_process_id = expected_process_id
-        if os.name == "nt" and expected_process_id:
-            subprocess.run(
-                ["taskkill", "/PID", str(expected_process_id), "/T"],
-                capture_output=True,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                check=False,
-            )
-        else:
-            self._process.terminate()
-        QTimer.singleShot(
-            5000,
-            lambda process_id=expected_process_id, active_job_id=expected_job_id: self.kill_if_running(
-                process_id,
-                job_id=active_job_id,
-            ),
-        )
+        stop_process(self._process, expected_process_id)
+
+        def kill_stale_process() -> bool:
+            return self.kill_if_running(expected_process_id, job_id=expected_job_id)
+
+        QTimer.singleShot(5000, kill_stale_process)
         return True
 
     def kill_if_running(
@@ -139,19 +135,11 @@ class GuiJobRunner(QObject):
             return False
         if not self.running:
             return False
-        if os.name == "nt" and current_process_id:
-            subprocess.run(
-                ["taskkill", "/PID", str(current_process_id), "/T", "/F"],
-                capture_output=True,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                check=False,
-            )
-        else:
-            self._process.kill()
+        stop_process(self._process, current_process_id, force=True)
         return True
 
     def _read_process_output(self) -> None:
-        data = bytes(self._process.readAllStandardOutput()).decode(
+        data = bytes(self._process.readAllStandardOutput().data()).decode(
             "utf-8",
             errors="replace",
         )
@@ -166,10 +154,7 @@ class GuiJobRunner(QObject):
 
     def _on_error(self, error: QProcess.ProcessError) -> None:
         self.errorOccurred.emit(error)
-        if (
-            self._process.state() == QProcess.ProcessState.NotRunning
-            and not self._cancel_requested
-        ):
+        if self._process.state() == QProcess.ProcessState.NotRunning and not self._cancel_requested:
             job_id = self._active_job_id
             if job_id:
                 self._last_job_id = job_id
@@ -183,13 +168,7 @@ class GuiJobRunner(QObject):
         job_id = self._active_job_id
         if not job_id:
             return
-        outcome = (
-            "canceled"
-            if self._cancel_requested
-            else "completed"
-            if exit_code == 0
-            else "error"
-        )
+        outcome = "canceled" if self._cancel_requested else "completed" if exit_code == 0 else "error"
         self._last_job_id = job_id
         self.finished.emit(exit_code, exit_status)
         self.terminal.emit(outcome, int(exit_code), job_id)

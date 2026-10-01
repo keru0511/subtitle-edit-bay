@@ -6,12 +6,14 @@ import unittest
 import zipfile
 from io import BytesIO
 from pathlib import Path
+from urllib.request import Request
 from unittest.mock import patch
 
 from src import updater
+from tests.typed_case import TypedTestCase
 
 
-class VersionComparisonTests(unittest.TestCase):
+class VersionComparisonTests(TypedTestCase):
     def test_development_is_not_newer_than_release(self) -> None:
         self.assertFalse(updater.is_newer_version("development", "development"))
         self.assertTrue(updater.is_newer_version("development", "v0.2.0"))
@@ -28,7 +30,12 @@ class VersionComparisonTests(unittest.TestCase):
         self.assertTrue(updater.is_newer_version("v0.1.0", "0.2.0"))
 
 
-class FetchLatestReleaseTests(unittest.TestCase):
+class FetchLatestReleaseTests(TypedTestCase):
+    def setUp(self) -> None:
+        platform = patch("sys.platform", "win32")
+        platform.start()
+        self.addCleanup(platform.stop)
+
     def test_fetch_latest_release_parses_github_response(self) -> None:
         payload = {
             "tag_name": "v0.2.0",
@@ -42,7 +49,7 @@ class FetchLatestReleaseTests(unittest.TestCase):
             root = Path(temp_dir)
             (root / "VERSION").write_text("v0.1.0\n", encoding="utf-8")
 
-            def fake_urlopen(request, **_kwargs):
+            def fake_urlopen(request: Request, **_kwargs: object) -> BytesIO:
                 self.assertIn("api.github.com", request.full_url)
                 return BytesIO(json.dumps(payload).encode("utf-8"))
 
@@ -91,7 +98,13 @@ class FetchLatestReleaseTests(unittest.TestCase):
                     updater.fetch_latest_release(root)
 
 
-class ApplyZipUpdateTests(unittest.TestCase):
+class ApplyZipUpdateTests(TypedTestCase):
+    def setUp(self) -> None:
+        # ここでは既存の更新・復元処理を検証する。OS拒否は別テストで検証する。
+        support = patch("src.updater.require_supported_update")
+        support.start()
+        self.addCleanup(support.stop)
+
     @staticmethod
     def _setup_script_content(*, fail: bool = False) -> str:
         if sys.platform == "win32" and shutil.which("powershell.exe"):
@@ -159,7 +172,7 @@ class ApplyZipUpdateTests(unittest.TestCase):
             self.assertEqual((distribution / "src" / "app.py").read_text(encoding="utf-8"), "old code")
 
 
-class LaunchUpdateScriptTests(unittest.TestCase):
+class LaunchUpdateScriptTests(TypedTestCase):
     def test_launch_update_script_uses_powershell_on_windows(self) -> None:
         with patch("sys.platform", "win32"), patch("shutil.which", return_value="powershell.exe"):
             command = updater.launch_update_script(Path("/app"), "https://example.com/app.zip")
@@ -168,10 +181,37 @@ class LaunchUpdateScriptTests(unittest.TestCase):
         self.assertNotIn("https://example.com/app.zip", command)
 
     def test_launch_update_script_falls_back_to_python_module(self) -> None:
-        with patch("sys.platform", "linux"), patch("shutil.which", return_value=None):
+        with patch("sys.platform", "win32"), patch("shutil.which", return_value=None):
             command = updater.launch_update_script(Path("/app"), "https://example.com/app.zip")
         self.assertEqual(command[1:-2], ["-m", "src.updater", "apply"])
         self.assertEqual(command[-2:], ["--archive-url", "https://example.com/app.zip"])
+
+
+class UnsupportedUpdateTests(TypedTestCase):
+    def test_zip_apply_rejects_before_touching_files_or_downloading(self) -> None:
+        for platform in ("darwin", "linux"):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                (root / "VERSION").write_bytes(b"v0.1.0\n")
+                backup = root / ".local/update_backups/pending"
+                backup.mkdir(parents=True)
+                (backup / "keep.txt").write_bytes(b"existing backup")
+
+                def snapshot() -> dict[str, bytes | None]:
+                    return {str(p.relative_to(root)): p.read_bytes() if p.is_file() else None for p in root.rglob("*")}
+
+                before = snapshot()
+                with patch("sys.platform", platform), patch("src.updater.urllib.request.urlopen") as urlopen:
+                    with self.assertRaisesRegex(updater.UpdaterError, "未対応"):
+                        updater.apply_zip_update(root, "https://example.test/release.zip")
+                    urlopen.assert_not_called()
+                self.assertEqual(snapshot(), before)
+
+    def test_launch_rejects_unsupported_os(self) -> None:
+        for platform in ("darwin", "linux"):
+            with self.subTest(platform=platform), patch("sys.platform", platform):
+                with self.assertRaisesRegex(updater.UpdaterError, "未対応"):
+                    updater.launch_update_script(Path("."), "https://example.test/release.zip")
 
 
 if __name__ == "__main__":

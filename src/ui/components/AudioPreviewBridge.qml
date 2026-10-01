@@ -13,11 +13,11 @@ Item {
     property int preparedGeneration: -1
     property int seekRevision: 0
     readonly property bool previewReady: Boolean(root.backend)
-        && !root.backend.audioPreviewPreparing
-        && root.backend.audioMixerPreviewComplete
-        && root.backend.audioMixerPreviewChannels.length > 0
+        && !root.backend.audio.audioPreviewPreparing
+        && root.backend.audio.audioMixerPreviewComplete
+        && root.backend.audio.audioMixerPreviewChannels.length > 0
     readonly property bool intentionalSilence: Boolean(root.backend)
-        && root.backend.audioMixerIntentionalSilence
+        && root.backend.audio.audioMixerIntentionalSilence
     readonly property bool muteSourceAudio: root.active
         && (root.previewReady || root.intentionalSilence)
 
@@ -55,9 +55,9 @@ Item {
         if (!root.active || !root.backend || !root.player || !root.previewReady)
             return
         if (root.isPlaying())
-            root.backend.startAudioMixerPreview(Math.round(root.player.position))
+            root.backend.audio.startAudioMixerPreview(Math.round(root.player.position))
         else
-            root.backend.pauseAudioMixerPreview()
+            root.backend.audio.pauseAudioMixerPreview()
         root.syncPreviewPlayers(true)
     }
 
@@ -68,11 +68,11 @@ Item {
     function activatePreview() {
         if (!root.active || !root.backend)
             return
-        var generation = Number(root.backend.audioPreviewGeneration)
+        var generation = Number(root.backend.audio.audioPreviewGeneration)
         if (!root.prepared || root.preparedGeneration !== generation) {
             root.prepared = true
             root.preparedGeneration = generation
-            root.backend.prepareAudioMixerPreview()
+            root.backend.audio.prepareAudioMixerPreview()
         }
         root.schedulePlaybackSync()
     }
@@ -80,13 +80,13 @@ Item {
     Component.onCompleted: if (root.active) root.activatePreview()
     Component.onDestruction: {
         if (root.backend)
-            root.backend.stopAudioMixerPreview()
+            root.backend.audio.stopAudioMixerPreview()
     }
     onActiveChanged: {
         if (active) {
             root.activatePreview()
         } else if (root.backend) {
-            root.backend.stopAudioMixerPreview()
+            root.backend.audio.stopAudioMixerPreview()
             root.syncPreviewPlayers(true)
         }
     }
@@ -96,14 +96,14 @@ Item {
         if (previewReady) {
             root.schedulePlaybackSync()
         } else {
-            backend.pauseAudioMixerPreview()
+            backend.audio.pauseAudioMixerPreview()
             root.syncPreviewPlayers(true)
         }
     }
     onSeekRevisionChanged: {
         if (!root.active || !root.backend || !root.player || !root.previewReady)
             return
-        root.backend.seekAudioMixerPreview(
+        root.backend.audio.seekAudioMixerPreview(
             Math.round(root.player.position),
             root.isPlaying()
         )
@@ -120,7 +120,7 @@ Item {
     }
 
     Connections {
-        target: root.backend
+        target: root.backend ? root.backend.audio : null
         enabled: root.backend !== null
 
         function onAudioPreviewCacheChanged() {
@@ -139,7 +139,7 @@ Item {
     Instantiator {
         id: previewPlayers
         objectName: "workspaceAudioPreviewPlayers"
-        model: root.prepared && root.backend ? root.backend.audioMixerPreviewChannels : []
+        model: root.prepared && root.backend ? root.backend.audio.audioMixerPreviewChannels : []
         delegate: MediaPlayer {
             id: previewPlayer
             required property int index

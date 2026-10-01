@@ -9,7 +9,9 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import IO, Callable, Sequence, cast
+
+from src.data_boundary import coerce_float, coerce_int, decode_json, is_object_list, is_object_mapping
 
 
 MEDIA_COMMAND_TIMEOUT_SECONDS = 30.0
@@ -199,7 +201,7 @@ def _command_failure(
 
 def _process_creation_options() -> tuple[bool, int]:
     if os.name == "nt":
-        return False, int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        return False, coerce_int(cast(object, getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)))
     return True, 0
 
 
@@ -218,7 +220,10 @@ def _terminate_process_tree(process: subprocess.Popen[str] | subprocess.Popen[by
             pass
     else:
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            kill_group = cast(Callable[[int, int], None] | None, getattr(os, "killpg", None))
+            kill_signal = cast(object, getattr(signal, "SIGKILL", None))
+            if kill_group is not None and isinstance(kill_signal, int):
+                kill_group(process.pid, kill_signal)
         except OSError:
             pass
 
@@ -236,10 +241,12 @@ def _collect_output_after_termination(
     try:
         return process.communicate(timeout=PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as cleanup_error:
-        if process.stdout is not None:
-            process.stdout.close()
-        if process.stderr is not None:
-            process.stderr.close()
+        stdout_stream = cast(IO[str] | IO[bytes] | None, process.stdout)
+        stderr_stream = cast(IO[str] | IO[bytes] | None, process.stderr)
+        if stdout_stream is not None:
+            stdout_stream.close()
+        if stderr_stream is not None:
+            stderr_stream.close()
         try:
             process.wait(timeout=PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
@@ -292,15 +299,18 @@ def run_media_command(
             stderr=timed_out_stderr,
             detail=f"Media command timed out after {timeout_seconds:.1f}s.",
         ) from error
-    if process.returncode != 0:
+    returncode = cast(int | None, process.returncode)
+    if returncode is None:
+        raise AssertionError("Media command has no exit status after communication.")
+    if returncode != 0:
         raise _command_failure(
             command,
             context=context,
             stdout=stdout,
             stderr=stderr,
-            detail=f"Media command failed with exit code {process.returncode}.",
+            detail=f"Media command failed with exit code {returncode}.",
         )
-    return subprocess.CompletedProcess(list(command), process.returncode, stdout, stderr)
+    return subprocess.CompletedProcess(list(command), returncode, stdout, stderr)
 
 
 def _run_media_command_bytes(
@@ -340,15 +350,18 @@ def _run_media_command_bytes(
             stderr=timed_out_stderr,
             detail=f"Media command timed out after {timeout_seconds:.1f}s.",
         ) from error
-    if process.returncode != 0:
+    returncode = cast(int | None, process.returncode)
+    if returncode is None:
+        raise AssertionError("Media command has no exit status after communication.")
+    if returncode != 0:
         raise _command_failure(
             command,
             context=context,
             stdout=stdout,
             stderr=stderr,
-            detail=f"Media command failed with exit code {process.returncode}.",
+            detail=f"Media command failed with exit code {returncode}.",
         )
-    return subprocess.CompletedProcess(list(command), process.returncode, stdout, stderr)
+    return subprocess.CompletedProcess(list(command), returncode, stdout, stderr)
 
 
 def create_lavfi_av_fixture(
@@ -563,8 +576,14 @@ def measure_audio_level(
             f"duration={duration_seconds if duration_seconds is not None else 'remaining'}s"
         ),
     )
-    mean_matches = re.findall(r"mean_volume:\s*(-?(?:[0-9]+(?:\.[0-9]+)?|inf))\s*dB", result.stderr)
-    max_matches = re.findall(r"max_volume:\s*(-?(?:[0-9]+(?:\.[0-9]+)?|inf))\s*dB", result.stderr)
+    mean_matches = [
+        match.group(1)
+        for match in re.finditer(r"mean_volume:\s*(-?(?:[0-9]+(?:\.[0-9]+)?|inf))\s*dB", result.stderr)
+    ]
+    max_matches = [
+        match.group(1)
+        for match in re.finditer(r"max_volume:\s*(-?(?:[0-9]+(?:\.[0-9]+)?|inf))\s*dB", result.stderr)
+    ]
     if not mean_matches or not max_matches:
         raise _command_failure(
             command,
@@ -623,7 +642,10 @@ def measure_integrated_loudness(
             f"start={start_seconds:g}s, duration={duration_seconds if duration_seconds is not None else 'remaining'}s"
         ),
     )
-    matches = re.findall(r"\bI:\s*(-?(?:[0-9]+(?:\.[0-9]+)?|inf))\s*LUFS", result.stderr)
+    matches = [
+        match.group(1)
+        for match in re.finditer(r"\bI:\s*(-?(?:[0-9]+(?:\.[0-9]+)?|inf))\s*LUFS", result.stderr)
+    ]
     if not matches:
         raise _command_failure(
             command,
@@ -657,46 +679,50 @@ def probe_media(path: Path) -> dict[str, object]:
         context=f"ffprobe: {path}",
     )
     try:
-        payload = json.loads(result.stdout)
+        payload = decode_json(result.stdout)
     except json.JSONDecodeError as error:
         raise AssertionError(f"ffprobe returned invalid JSON for {path}: {result.stdout}") from error
-    if not isinstance(payload, dict):
+    if not is_object_mapping(payload) or not all(isinstance(key, str) for key in payload):
         raise AssertionError(f"ffprobe returned a non-object payload for {path}: {payload!r}")
-    return payload
+    return {key: value for key, value in payload.items() if isinstance(key, str)}
 
 
 def video_stream(probe: dict[str, object]) -> dict[str, object]:
     streams = probe.get("streams")
-    if not isinstance(streams, list):
+    if not is_object_list(streams):
         raise AssertionError(f"ffprobe payload has no streams list: {probe!r}")
     for stream in streams:
-        if isinstance(stream, dict) and stream.get("codec_type") == "video":
-            return stream
+        if is_object_mapping(stream) and stream.get("codec_type") == "video":
+            return {key: value for key, value in stream.items() if isinstance(key, str)}
     raise AssertionError(f"ffprobe payload has no video stream: {probe!r}")
 
 
 def audio_streams(probe: dict[str, object]) -> list[dict[str, object]]:
     streams = probe.get("streams")
-    if not isinstance(streams, list):
+    if not is_object_list(streams):
         raise AssertionError(f"ffprobe payload has no streams list: {probe!r}")
-    return [stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "audio"]
+    return [
+        {key: value for key, value in stream.items() if isinstance(key, str)}
+        for stream in streams
+        if is_object_mapping(stream) and stream.get("codec_type") == "audio"
+    ]
 
 
 def media_duration_seconds(probe: dict[str, object]) -> float:
     format_info = probe.get("format")
-    if isinstance(format_info, dict):
+    if is_object_mapping(format_info):
         try:
-            return float(format_info["duration"])
+            return coerce_float(format_info["duration"])
         except (KeyError, TypeError, ValueError):
             pass
     durations: list[float] = []
     streams = probe.get("streams")
-    if isinstance(streams, list):
+    if is_object_list(streams):
         for stream in streams:
-            if not isinstance(stream, dict):
+            if not is_object_mapping(stream):
                 continue
             try:
-                durations.append(float(stream["duration"]))
+                durations.append(coerce_float(stream["duration"]))
             except (KeyError, TypeError, ValueError):
                 continue
     if durations:

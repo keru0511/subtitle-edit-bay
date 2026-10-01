@@ -278,10 +278,22 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
           path: release-tools
+      - name: Configure installer download cache
+        shell: pwsh
+        run: |
+          # setup-pythonと製品ランチャーの子プロセスで同じキャッシュを使う。
+          Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8 `
+              -Value "PIP_CACHE_DIR=$env:RUNNER_TEMP\installer-pip-cache"
       - name: Set up Python 3.10
         uses: actions/setup-python@v7
         with:
           python-version: "3.10"
+          cache: pip
+          cache-dependency-path: |
+            release-tools/requirements.txt
+            release-tools/runtime/runtime-contract.json
+            release-tools/runtime/requirements-windows-cpu.lock
+            release-tools/runtime/requirements-windows-cu128.lock
       - name: Install FFmpeg runtime
         shell: pwsh
         run: |

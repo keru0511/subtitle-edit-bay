@@ -12,8 +12,9 @@ import math
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Callable, Mapping, Sequence
 
+from .data_boundary import coerce_float, coerce_int, is_object_list, is_object_mapping
 from .ffmpeg_execution import run_atomic_ffmpeg_export
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF, build_video_encoding_args
 from .video_sequence import SequenceClip, VideoSequence, VideoSequenceError
@@ -37,9 +38,9 @@ class SequenceRenderPlan:
 SEQUENCE_RENDER_FPS = 30
 
 
-def _number(value: Any, field_name: str) -> float:
+def _number(value: object, field_name: str) -> float:
     try:
-        number = float(value)
+        number = coerce_float(value)
     except (TypeError, ValueError) as error:
         raise SequenceRenderError(f"{field_name} must be a number") from error
     if not math.isfinite(number):
@@ -47,24 +48,24 @@ def _number(value: Any, field_name: str) -> float:
     return number
 
 
-def _has_text_segments(project: Mapping[str, Any]) -> bool:
+def _has_text_segments(project: Mapping[object, object]) -> bool:
     segments = project.get("segments", [])
-    if not isinstance(segments, list):
+    if not is_object_list(segments):
         return False
     return any(
-        isinstance(segment, Mapping) and str(segment.get("text", "")).strip()
+        is_object_mapping(segment) and str(segment.get("text", "")).strip()
         for segment in segments
     )
 
 
-def _video_parameters(asset_id: str, stream: Mapping[str, Any]) -> tuple[int, int, str]:
-    if not isinstance(stream, Mapping):
+def _video_parameters(asset_id: str, stream: Mapping[str, object]) -> tuple[int, int, str]:
+    if not is_object_mapping(stream):
         raise SequenceRenderError(
             f"sequence asset video metadata is incomplete: {asset_id}"
         )
     try:
-        width = int(stream["width"])
-        height = int(stream["height"])
+        width = coerce_int(stream["width"])
+        height = coerce_int(stream["height"])
     except (KeyError, TypeError, ValueError) as error:
         raise SequenceRenderError(
             f"sequence asset video metadata is incomplete: {asset_id}"
@@ -88,11 +89,11 @@ def _format_video_parameters(parameters: tuple[int, int, str]) -> str:
 
 
 def prepare_sequence_render(
-    project: Mapping[str, Any],
+    project: Mapping[object, object],
     *,
     probe_duration: Callable[[str], float],
-    probe_audio_streams: Callable[[str], list[dict[str, Any]]],
-    probe_video_stream: Callable[[str], Mapping[str, Any]],
+    probe_audio_streams: Callable[[str], Sequence[object]],
+    probe_video_stream: Callable[[str], Mapping[str, object]],
     output_audio_track: str = "0:a:0",
     cut_no_speech: bool = False,
 ) -> SequenceRenderPlan:
@@ -114,21 +115,21 @@ def prepare_sequence_render(
             "multi-clip subtitle mapping is not defined; refusing to render ambiguous timestamps"
         )
     timeline_payload = project.get("timeline")
-    if isinstance(timeline_payload, Mapping) and timeline_payload.get("cuts"):
+    if is_object_mapping(timeline_payload) and timeline_payload.get("cuts"):
         raise SequenceRenderError(
             "single-source timeline cuts cannot be combined with a multi-clip sequence"
         )
     audio_mix = project.get("audio_mix")
-    if isinstance(audio_mix, Mapping):
+    if is_object_mapping(audio_mix):
         if bool(audio_mix.get("customized")):
             raise SequenceRenderError(
                 "custom audio mix is not sequence-scoped; refusing to render"
             )
         channels = audio_mix.get("channels", [])
-        if not isinstance(channels, list):
+        if not is_object_list(channels):
             raise SequenceRenderError("audio mix channels are invalid for sequence render")
         external_enabled = any(
-            isinstance(channel, Mapping)
+            is_object_mapping(channel)
             and channel.get("kind") == "external"
             and bool(channel.get("enabled"))
             for channel in channels

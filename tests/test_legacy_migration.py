@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import tempfile
 import unittest
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterator, MutableSequence, cast
 from unittest.mock import patch
 
+from src.data_boundary import decode_json
 from src.legacy_migration import (
     CACHE_KIND_AUDIO_PREVIEW,
     CACHE_KIND_LEGACY_APP_SOURCE,
-    CACHE_KIND_LEGACY_VENV,
     CACHE_KIND_MEDIA,
     CACHE_KIND_OUTPUT,
     CACHE_KIND_PIP_DOWNLOAD,
@@ -38,7 +38,6 @@ from src.legacy_migration import (
     CATEGORY_PROJECT,
     CATEGORY_RUNTIME_CONFIG,
     CATEGORY_SPEAKER_COLORS,
-    CATEGORY_USER_SETTINGS,
     SCOPE_EXTERNAL,
     STATUS_NOT_DISCOVERABLE,
     STATUS_MISSING,
@@ -47,6 +46,9 @@ from src.legacy_migration import (
     MIGRATION_ITEM_READY,
     MIGRATION_REASON_CONFIRMATION_REQUIRED,
     MIGRATION_REASON_DESTINATION_EXISTS,
+    InventoryEntry,
+    LegacyInventory,
+    LegacyMigrationPlan,
     MigrationError,
     RuntimeCapabilities,
     SettingsMigrationOptions,
@@ -57,9 +59,15 @@ from src.legacy_migration import (
     build_legacy_inventory,
     build_legacy_migration_plan,
 )
+from tests.typed_case import TypedTestCase
+from tests.typed_data import entries, object_dict, section
 
 
-class LegacyMigrationInventoryTests(unittest.TestCase):
+def _decoded_object(text: str) -> dict[str, object]:
+    return object_dict(decode_json(text))
+
+
+class LegacyMigrationInventoryTests(TypedTestCase):
     def _fixture(self, root: Path) -> Path:
         legacy = root / "legacy"
         (legacy / ".gui").mkdir(parents=True)
@@ -72,7 +80,7 @@ class LegacyMigrationInventoryTests(unittest.TestCase):
         (legacy / "setup.bat").write_text("not executed", encoding="utf-8")
         (legacy / "start.bat").write_text("not executed", encoding="utf-8")
         (legacy / ".gui" / "runtime_config.json").write_text(
-            json.dumps({"shared": {"device": "cpu", "api_token": "must not be read"}}),
+            json.dumps(dict[str, object]({"shared": {"device": "cpu", "api_token": "must not be read"}})),
             encoding="utf-8",
         )
         (legacy / "assets" / "speaker_colors.json").write_text("{}", encoding="utf-8")
@@ -84,7 +92,7 @@ class LegacyMigrationInventoryTests(unittest.TestCase):
         (legacy / "episode.seb-project.json").write_text("{}", encoding="utf-8")
         return legacy
 
-    def _entry(self, inventory, category: str, relative: str):
+    def _entry(self, inventory: LegacyInventory, category: str, relative: str) -> InventoryEntry:
         return next(
             entry
             for entry in inventory.entries
@@ -130,17 +138,19 @@ class LegacyMigrationInventoryTests(unittest.TestCase):
             legacy = self._fixture(Path(temporary))
             inventory = build_legacy_inventory(legacy)
             with self.assertRaises(FrozenInstanceError):
-                inventory.legacy_root = "changed"  # type: ignore[misc]
+                setattr(inventory, "legacy_root", "changed")
             with self.assertRaises(TypeError):
-                inventory.entries[0] = inventory.entries[0]  # type: ignore[index]
+                cast(MutableSequence[object], inventory.entries)[0] = inventory.entries[0]
 
             plan = build_legacy_migration_plan(legacy)
+            if not isinstance(plan, LegacyMigrationPlan):
+                raise AssertionError("expected an inventory-only plan")
             self.assertEqual(len(plan.actions), len(inventory.entries))
             self.assertTrue(all(action.operation == "inspect_only" for action in plan.actions))
             self.assertTrue(all(not action.destructive for action in plan.actions))
-            decoded = json.loads(plan.to_json())
+            decoded = _decoded_object(plan.to_json())
             self.assertEqual(decoded["legacy_root"], str(legacy.resolve()))
-            self.assertEqual(decoded["actions"][0]["operation"], "inspect_only")
+            self.assertEqual(entries(decoded, "actions")[0]["operation"], "inspect_only")
 
     def test_external_cache_capabilities_are_not_misclassified_as_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -164,9 +174,9 @@ class LegacyMigrationInventoryTests(unittest.TestCase):
                 self.assertEqual(entry.path, "")
                 self.assertIn("not treated as missing", entry.diagnostic or "")
 
-            decoded = json.loads(inventory.to_json())
+            decoded = _decoded_object(inventory.to_json())
             external_json = [
-                item for item in decoded["entries"] if item["scope"] == SCOPE_EXTERNAL
+                item for item in entries(decoded, "entries") if item["scope"] == SCOPE_EXTERNAL
             ]
             self.assertEqual(
                 {item["candidate_id"] for item in external_json},
@@ -228,9 +238,9 @@ class LegacyMigrationInventoryTests(unittest.TestCase):
             self.assertEqual(by_id["pip-user-cache"].state, CACHE_STATE_REUSE)
             self.assertFalse(by_id["pip-user-cache"].cleanup_allowed)
             self.assertGreaterEqual(complete.reclaimable_bytes, len(b"wheel") + len(b"source"))
-            decoded = json.loads(complete.to_json())
+            decoded = _decoded_object(complete.to_json())
             self.assertIn("reclaimable_bytes", decoded)
-            self.assertIn("referenced_data", decoded["entries"][0])
+            self.assertIn("referenced_data", entries(decoded, "entries")[0])
 
     def test_cache_cleanup_requires_confirmation_and_preserves_user_data(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -425,7 +435,7 @@ class LegacyMigrationInventoryTests(unittest.TestCase):
             permission_target = legacy / "cache"
             original_scandir = os.scandir
 
-            def guarded_scandir(path):
+            def guarded_scandir(path: str | os.PathLike[str]) -> Iterator[os.DirEntry[str]]:
                 if Path(path) == permission_target:
                     raise PermissionError("fixture permission denied")
                 return original_scandir(path)
@@ -440,7 +450,7 @@ class LegacyMigrationInventoryTests(unittest.TestCase):
             self.assertFalse((permission_target / "new-file").exists())
 
 
-class LegacySettingsMigrationTests(unittest.TestCase):
+class LegacySettingsMigrationTests(TypedTestCase):
     def _workspace(self, root: Path) -> tuple[Path, Path]:
         source = root / "legacy"
         destination = root / "installed"
@@ -448,33 +458,33 @@ class LegacySettingsMigrationTests(unittest.TestCase):
             (source / relative).mkdir(parents=True, exist_ok=True)
         (source / ".gui" / "runtime_config.json").write_text(
             json.dumps(
-                {
+                dict[str, object]({
                     "shared": {"device": "cuda", "compute_type": "float16"},
                     "craig_pipeline": {
                         "video_codec": "h264_nvenc",
-                        "transcription_context": {
+                        "transcription_context": dict[str, object]({
                             "dictionary_path": "dictionaries/game.json",
                             "dictionary_confirmed": True,
-                        },
+                        }),
                     },
-                }
+                })
             ),
             encoding="utf-8",
         )
         (source / "assets" / "speaker_colors.json").write_text(
-            json.dumps({"speakers": {"Alice": {"color": "#AABBCC"}}, "files": {}}),
+            json.dumps(dict[str, object]({"speakers": {"Alice": {"color": "#AABBCC"}}, "files": dict[str, object]()})),
             encoding="utf-8",
         )
         (source / "dictionaries" / "game.json").write_text(
-            json.dumps({"game_title": "Test", "terms": []}), encoding="utf-8"
+            json.dumps(dict[str, object]({"game_title": "Test", "terms": list[object]()})), encoding="utf-8"
         )
         (source / "presets" / "default.json").write_text(
             json.dumps(
-                {
+                dict[str, object]({
                     "schema_version": 1,
                     "name": "default",
                     "categories": {"subtitle": {"font_size": 42}},
-                }
+                })
             ),
             encoding="utf-8",
         )
@@ -494,12 +504,12 @@ class LegacySettingsMigrationTests(unittest.TestCase):
             self.assertNotIn("h264_nvenc", plan.to_json())
             result = apply_settings_migration(plan, now=datetime(2026, 9, 13, tzinfo=timezone.utc))
 
-            migrated = json.loads((destination / ".gui" / "runtime_config.json").read_text())
-            self.assertEqual(migrated["shared"]["device"], "cpu")
-            self.assertEqual(migrated["shared"]["compute_type"], "int8")
-            self.assertEqual(migrated["craig_pipeline"]["video_codec"], "libx264")
+            migrated = _decoded_object((destination / ".gui" / "runtime_config.json").read_text())
+            self.assertEqual(section(migrated, "shared")["device"], "cpu")
+            self.assertEqual(section(migrated, "shared")["compute_type"], "int8")
+            self.assertEqual(section(migrated, "craig_pipeline")["video_codec"], "libx264")
             self.assertEqual(
-                migrated["craig_pipeline"]["transcription_context"]["dictionary_path"],
+                section(section(migrated, "craig_pipeline"), "transcription_context")["dictionary_path"],
                 str((destination / "dictionaries" / "game.json").resolve()),
             )
             self.assertTrue((destination / "dictionaries" / "game.json").is_file())
@@ -516,10 +526,10 @@ class LegacySettingsMigrationTests(unittest.TestCase):
 
             self.assertEqual(plan.capabilities, RuntimeCapabilities(cuda=False, nvenc=False))
             result = apply_settings_migration(plan)
-            migrated = json.loads((destination / ".gui" / "runtime_config.json").read_text())
-            self.assertEqual(migrated["shared"]["device"], "cpu")
-            self.assertEqual(migrated["shared"]["compute_type"], "int8")
-            self.assertEqual(migrated["craig_pipeline"]["video_codec"], "libx264")
+            migrated = _decoded_object((destination / ".gui" / "runtime_config.json").read_text())
+            self.assertEqual(section(migrated, "shared")["device"], "cpu")
+            self.assertEqual(section(migrated, "shared")["compute_type"], "int8")
+            self.assertEqual(section(migrated, "craig_pipeline")["video_codec"], "libx264")
             self.assertIn("cpu/int8", " ".join(result.adjusted))
 
     def test_existing_destination_requires_explicit_overwrite_confirmation(self) -> None:
@@ -533,7 +543,7 @@ class LegacySettingsMigrationTests(unittest.TestCase):
             preserved = build_settings_migration_plan(inventory, destination)
             config_item = next(item for item in preserved.items if item.relative_path == ".gui/runtime_config.json")
             self.assertEqual(config_item.reason, MIGRATION_REASON_DESTINATION_EXISTS)
-            self.assertEqual(json.loads(current.read_text())["shared"]["device"], "cpu")
+            self.assertEqual(section(_decoded_object(current.read_text()), "shared")["device"], "cpu")
 
             with_confirm = build_settings_migration_plan(
                 inventory,
@@ -546,8 +556,8 @@ class LegacySettingsMigrationTests(unittest.TestCase):
             )
             result = apply_settings_migration(with_confirm)
             self.assertIn(str(current), result.applied)
-            self.assertEqual(json.loads(current.read_text())["shared"]["device"], "cpu")
-            self.assertEqual(json.loads(current.read_text())["shared"]["compute_type"], "int8")
+            self.assertEqual(section(_decoded_object(current.read_text()), "shared")["device"], "cpu")
+            self.assertEqual(section(_decoded_object(current.read_text()), "shared")["compute_type"], "int8")
 
             without_confirm = build_settings_migration_plan(
                 inventory,
@@ -563,7 +573,7 @@ class LegacySettingsMigrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             source, destination = self._workspace(Path(temporary))
             (source / ".gui" / "runtime_config.json").write_text(
-                json.dumps({"shared": {"api_token": "do-not-log"}}), encoding="utf-8"
+                json.dumps(dict[str, object]({"shared": {"api_token": "do-not-log"}})), encoding="utf-8"
             )
             plan = build_settings_migration_plan(build_legacy_inventory(source), destination)
             item = next(item for item in plan.items if item.relative_path == ".gui/runtime_config.json")
@@ -577,7 +587,7 @@ class LegacySettingsMigrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             source, destination = self._workspace(Path(temporary))
             (source / ".gui" / "runtime_config.json").write_text(
-                json.dumps({"shared": {"device": "cpu", "old_option": "ignored"}}),
+                json.dumps(dict[str, object]({"shared": {"device": "cpu", "old_option": "ignored"}})),
                 encoding="utf-8",
             )
             plan = build_settings_migration_plan(build_legacy_inventory(source), destination)
@@ -586,8 +596,8 @@ class LegacySettingsMigrationTests(unittest.TestCase):
                 MIGRATION_ITEM_READY,
             )
             apply_settings_migration(plan)
-            migrated = json.loads((destination / ".gui" / "runtime_config.json").read_text())
-            self.assertNotIn("old_option", migrated["shared"])
+            migrated = _decoded_object((destination / ".gui" / "runtime_config.json").read_text())
+            self.assertNotIn("old_option", section(migrated, "shared"))
 
     def test_atomic_apply_rolls_back_when_a_later_setting_write_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

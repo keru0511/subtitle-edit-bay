@@ -1,6 +1,5 @@
 pragma ComponentBehavior: Bound
 import QtQuick
-import QtQml.Models
 import QtQuick.Controls
 import QtQuick.Dialogs
 import "../components"
@@ -14,36 +13,33 @@ ApplicationWindow {
     // qmllint enable unqualified
     readonly property var workflowCapabilities: {
         // Depend on backend notifications as well as the unsaved device choice.
-        var snapshot = root.appBackend.actionCapabilities
-        return snapshot ? root.appBackend.actionCapabilitiesForDevice(deviceCombo.currentText) : ({})
+        var snapshot = root.appBackend.workflow.actionCapabilities
+        return snapshot ? root.appBackend.workflow.actionCapabilitiesForDevice(advancedSettingsPopup.selectedDevice) : ({})
     }
     property real timelinePixelsPerSecond: 34
-    property real editorPixelsPerSecond: 64
-    property int snapMilliseconds: 100
+    property alias editorPixelsPerSecond: subtitleEditorState.pixelsPerSecond
+    property alias snapMilliseconds: subtitleEditorState.snapMilliseconds
     readonly property int defaultSubtitleFontSize: 50
-    property int subtitleFontSizePercent: 100
-    property string subtitleOutlineColor: "#000000"
-    property int subtitleOutlineThickness: 3
-    readonly property int selectedSubtitleFontSize: Math.max(
-        3,
-        Math.round(root.defaultSubtitleFontSize * root.subtitleFontSizePercent / 100)
-    )
+    property alias subtitleFontSizePercent: advancedSettingsPopup.fontSizePercent
+    property alias subtitleOutlineColor: advancedSettingsPopup.outlineColor
+    property alias subtitleOutlineThickness: advancedSettingsPopup.outlineThickness
+    readonly property int selectedSubtitleFontSize: advancedSettingsPopup.selectedFontSize
     readonly property string selectedSubtitleOutlineColor: root.subtitleOutlineColor
     readonly property int selectedSubtitleOutlineThickness: root.subtitleOutlineThickness
-    property var projectSpeakerCache: root.appBackend.projectSpeakers
-    property var subtitleWaveformCache: root.appBackend.subtitleWaveforms
-    property var subtitleLayoutMetricsCache: root.appBackend.subtitleLayoutMetrics
-    property real editorPositionCache: 0
-    property real editorTimelineScrollX: 0
-    property real editorCaptionScrollY: 0
+    property var projectSpeakerCache: root.appBackend.subtitles.projectSpeakers
+    property var subtitleWaveformCache: root.appBackend.subtitles.subtitleWaveforms
+    property var subtitleLayoutMetricsCache: root.appBackend.subtitles.subtitleLayoutMetrics
+    property alias editorPositionCache: subtitleEditorState.positionMs
+    property alias editorTimelineScrollX: subtitleEditorState.timelineScrollX
+    property alias editorCaptionScrollY: subtitleEditorState.captionScrollY
     property real workspaceAudioTimelineScrollX: 0
     property real workspaceAudioSettingsScrollY: 0
     property int sharedSeekRevision: 0
     property bool applyingSharedSeek: false
     property real pendingSharedSourcePosition: -1
     property var pendingWelcomeTranscriptionRequest: null
-    property int editorDraftSegmentIndex: -1
-    property string editorDraftText: ""
+    property alias editorDraftSegmentIndex: subtitleEditorState.draftSegmentIndex
+    property alias editorDraftText: subtitleEditorState.draftText
     property string activeOverlay: ""
     property real cutSelectionStartMs: 0
     property real cutSelectionEndMs: 0
@@ -52,35 +48,37 @@ ApplicationWindow {
     // and source/output playhead remain owned by this workspace.
     property Component cutModeEditorContent: cutWorkspaceEditorComponent
     property Component cutModeSettingsContent: cutWorkspaceSettingsComponent
-    property Component modeEditorContent: root.appBackend.currentEditMode === "subtitle"
+    property Component modeEditorContent: root.appBackend.workspace.currentEditMode === "subtitle"
         ? subtitleWorkspaceEditorComponent
-        : (root.appBackend.currentEditMode === "audio"
+        : (root.appBackend.workspace.currentEditMode === "audio"
             ? audioWorkspaceEditorComponent
             : root.cutModeEditorContent)
-    property Component modeSettingsContent: root.appBackend.currentEditMode === "subtitle"
+    property Component modeSettingsContent: root.appBackend.workspace.currentEditMode === "subtitle"
         ? subtitleWorkspaceSettingsComponent
-        : (root.appBackend.currentEditMode === "audio"
+        : (root.appBackend.workspace.currentEditMode === "audio"
             ? audioWorkspaceSettingsComponent
             : root.cutModeSettingsContent)
     readonly property bool editorMode: root.activeOverlay === "editor"
     readonly property bool mixerMode: root.activeOverlay === "mixer"
     readonly property bool dictionaryMode: root.activeOverlay === "dictionary"
     readonly property bool shortWorkspaceActive: root.appBackend
-        && root.appBackend.currentWorkspace === "short-artifact"
+        && root.appBackend.workspace.currentWorkspace === "short-artifact"
     readonly property bool codexAuthenticated: root.appBackend
-        && root.appBackend.codexAuthState === "authenticated"
+        && root.appBackend.ai.codexAuthState === "authenticated"
     readonly property string aiProviderLoginLabel: {
         var providerName = root.appBackend
-            ? String(root.appBackend.aiChatProviderName || "")
+            ? String(root.appBackend.ai.aiChatProviderName || "")
             : ""
         return providerName ? providerName + "ログイン" : "ログイン"
     }
     readonly property bool codexSidebarOverlay: root.width < 1400
-    readonly property int codexSidebarWidth: root.codexAuthenticated && root.codexDrawerOpen ? 300 : 0
+    readonly property int codexSidebarWidth: root.codexAuthenticated && root.codexDrawerOpen
+        && !root.loginInInspector ? 300 : 0
     readonly property int codexDrawerHeaderInset: root.codexAuthenticated && root.codexSidebarOverlay
+        && !root.loginInInspector
         ? (root.codexDrawerOpen ? 310 : 104) : 0
     readonly property int codexDrawerBodyInset: root.codexAuthenticated && root.codexSidebarOverlay
-        && root.codexDrawerOpen ? 310 : 0
+        && root.codexDrawerOpen && !root.loginInInspector ? 310 : 0
     readonly property int codexWorkspaceRightInset: root.codexSidebarWidth > 0 && !root.codexSidebarOverlay
         ? root.codexSidebarWidth + 10 : 0
     readonly property int codexInteractiveRightInset: root.codexWorkspaceRightInset
@@ -92,11 +90,22 @@ ApplicationWindow {
     readonly property int shortWorkspaceAiAccessInset: root.shortWorkspaceActive
         && !root.codexAuthenticated ? 58 : 0
     property bool codexDrawerOpen: true
+    property string inspectorTab: "settings"
     property bool previousCodexAuthenticated: false
+    onCodexAuthenticatedChanged: {
+        if (root.codexAuthenticated && !root.previousCodexAuthenticated) {
+            root.codexDrawerOpen = true
+            if (root.loginInInspector)
+                root.selectInspectorTab("codex")
+        }
+        root.previousCodexAuthenticated = root.codexAuthenticated
+    }
     onEditorModeChanged: {
         if (root.editorMode)
             root.syncEditorPlayhead(root.editorPositionCache, true)
     }
+    readonly property bool loginInInspector: mainWorkspace.visible && root.appBackend.projectLoaded
+    property string editTool: "cut"
     property bool settingsExpanded: false
     property string colorTarget: ""
     property int colorTargetIndex: -1
@@ -108,26 +117,28 @@ ApplicationWindow {
     minimumHeight: 760
     visible: true
     title: "Subtitle Edit Bay"
-    color: "#0E1117"
-    palette.window: "#161B22"
-    palette.windowText: "#F0F6FC"
-    palette.base: "#161B22"
-    palette.text: "#F0F6FC"
-    palette.button: "#21262D"
-    palette.buttonText: "#F0F6FC"
+    color: "#0B0F17"
+    palette.window: "#131A26"
+    palette.windowText: "#F8FAFC"
+    palette.base: "#131A26"
+    palette.text: "#F8FAFC"
+    palette.button: "#1A2332"
+    palette.buttonText: "#F8FAFC"
     palette.highlight: "#6366F1"
     palette.highlightedText: "#FFFFFF"
 
-    readonly property color panel: "#161B22"
-    readonly property color raised: "#21262D"
-    readonly property color border: "#30363D"
-    readonly property color textPrimary: "#F0F6FC"
-    readonly property color textMuted: "#8B949E"
+    readonly property color panel: "#131A26"
+    readonly property color raised: "#1A2332"
+    readonly property color border: "#243044"
+    readonly property color textPrimary: "#F8FAFC"
+    readonly property color textMuted: "#94A3B8"
     readonly property color acid: "#6366F1"
     readonly property color amber: "#F59E0B"
     readonly property color danger: "#EF4444"
 
     function openSpeakerColorPicker(target, index, currentColor) {
+        if (!root.commitPendingEdits())
+            return
         root.colorTarget = target
         root.colorTargetIndex = index
         speakerColorDialog.selectedColor = currentColor || "#FFFFFF"
@@ -143,7 +154,7 @@ ApplicationWindow {
             if (root.colorTarget === "source")
                 root.appBackend.updateSpeakerColor(root.colorTargetIndex, colorValue)
             else if (root.colorTarget === "project")
-                root.appBackend.updateProjectSpeakerColor(root.colorTargetIndex, colorValue)
+                root.appBackend.subtitles.updateProjectSpeakerColor(root.colorTargetIndex, colorValue)
             root.colorTarget = ""
             root.colorTargetIndex = -1
         }
@@ -157,11 +168,11 @@ ApplicationWindow {
         id: outlineColorDialog
         objectName: "outlineColorDialog"
         title: "字幕の縁取り色を選択"
-        onAccepted: outlineColorButton.colorValue = selectedColor.toString()
+        onAccepted: advancedSettingsPopup.outlineColor = selectedColor.toString()
     }
 
-    function openOutlineColorPicker() {
-        outlineColorDialog.selectedColor = outlineColorButton.colorValue
+    function openOutlineColorPicker(currentColor) {
+        outlineColorDialog.selectedColor = currentColor
         outlineColorDialog.open()
     }
 
@@ -174,31 +185,11 @@ ApplicationWindow {
     }
 
     function currentSettings() {
-        return {
-            "model": modelCombo.currentText,
-            "device": deviceCombo.currentText,
-            "compute_type": deviceCombo.currentText === "cuda" ? "float16" : "int8",
-            "language": "ja",
-            "nvenc_cq": qualitySpin.value,
-            "x264_crf": qualitySpin.value,
-            "subtitle_font_size": root.selectedSubtitleFontSize,
-            "subtitle_outline_color": root.selectedSubtitleOutlineColor,
-            "subtitle_outline_thickness": root.selectedSubtitleOutlineThickness,
-            "subtitle_volume_scale_percent": volumeScaleSpin.value,
-            "subtitle_max_gap_seconds": Number(gapField.text),
-            "subtitle_end_padding_seconds": Number(paddingField.text),
-            "subtitle_min_duration_seconds": Number(minDurationField.text),
-            "audio_normalize": normalizeSwitch.checked,
-            "audio_target_lufs": Number(lufsField.text),
-            "cut_no_speech": silenceSwitch.checked,
-            "no_speech_min_seconds": Number(silenceField.text),
-            "speech_padding_seconds": Number(speechPaddingField.text),
-            "speech_threshold_db": String(Number(speechThresholdField.text)) + "dB",
-            "postprocess_workers": workersSpin.value,
-            "reference_audio": root.appBackend.speakers.length > 0 ? referenceCombo.currentValue : "",
-            "reference_track": root.appBackend.audioTracks.length > 0 ? trackCombo.currentValue : "",
-            "alignment_offset_adjustment": Number(manualOffsetField.text || 0)
-        }
+        var values = advancedSettingsPopup.settingsValues()
+        values.reference_audio = root.appBackend.speakers.length > 0 ? sourcePopup.referenceAudioValue : ""
+        values.reference_track = root.appBackend.audioTracks.length > 0 ? sourcePopup.referenceTrackValue : ""
+        values.alignment_offset_adjustment = Number(sourcePopup.manualOffsetText || 0)
+        return values
     }
 
     function coalesceSetting(value, fallback) {
@@ -250,21 +241,6 @@ ApplicationWindow {
         return stageLabel + " · " + statusLabel
     }
 
-    function alignmentStatusLabel(value) {
-        var labels = {
-            "未解析": "未解析",
-            "running": "調整中",
-            "success": "調整完了",
-            "completed": "調整完了",
-            "error": "調整に失敗しました"
-        }
-        var text = String(value || "")
-        var key = text.toLowerCase()
-        if (labels[key] !== undefined)
-            return labels[key]
-        return /^[\u3040-\u30ff\u3400-\u9fff]/.test(text) ? text : "結果を確認中"
-    }
-
     function formatBytes(value) {
         var bytes = Number(value || 0)
         if (!isFinite(bytes) || bytes <= 0)
@@ -276,33 +252,22 @@ ApplicationWindow {
 
     function syncSettings() {
         var value = root.appBackend.settings
-        qualitySpin.value = Number(coalesceSetting(value.nvenc_cq, 18))
-        root.subtitleFontSizePercent = Math.round(Number(coalesceSetting(value.subtitle_font_size, root.defaultSubtitleFontSize)) / root.defaultSubtitleFontSize * 100)
-        fontSizeSpin.value = root.subtitleFontSizePercent
-        root.subtitleOutlineColor = String(coalesceSetting(value.subtitle_outline_color, "#000000"))
-        outlineColorButton.colorValue = root.subtitleOutlineColor
-        root.subtitleOutlineThickness = Number(value.subtitle_outline_thickness === undefined ? 3 : value.subtitle_outline_thickness)
-        outlineThicknessSpin.value = root.subtitleOutlineThickness
-        volumeScaleSpin.value = Number(value.subtitle_volume_scale_percent === undefined ? 20 : value.subtitle_volume_scale_percent)
-        gapField.text = Number(coalesceSetting(value.subtitle_max_gap_seconds, 0.1)).toFixed(2)
-        paddingField.text = Number(coalesceSetting(value.subtitle_end_padding_seconds, 0.08)).toFixed(2)
-        minDurationField.text = Number(coalesceSetting(value.subtitle_min_duration_seconds, 0.35)).toFixed(2)
-        silenceField.text = Number(coalesceSetting(value.no_speech_min_seconds, 1.2)).toFixed(1)
-        speechPaddingField.text = Number(coalesceSetting(value.speech_padding_seconds, 0.25)).toFixed(2)
-        speechThresholdField.text = parseFloat(String(coalesceSetting(value.speech_threshold_db, "-40dB"))).toFixed(0)
-        lufsField.text = Number(coalesceSetting(value.audio_target_lufs, -16)).toFixed(0)
-        normalizeSwitch.checked = value.audio_normalize === undefined ? true : value.audio_normalize
-        silenceSwitch.checked = Boolean(value.cut_no_speech)
-        workersSpin.value = Number(coalesceSetting(value.postprocess_workers, 4))
-        modelCombo.currentIndex = Math.max(0, modelCombo.find(coalesceSetting(value.model, "large-v3")))
-        deviceCombo.currentIndex = Math.max(0, deviceCombo.find(coalesceSetting(value.device, "cuda")))
-        manualOffsetField.text = Number(coalesceSetting(value.alignment_offset_adjustment, 0)).toFixed(3)
+        advancedSettingsPopup.applySettings(value)
+        sourcePopup.manualOffsetText = Number(coalesceSetting(value.alignment_offset_adjustment, 0)).toFixed(3)
     }
     function toggleSettingsPopup() {
+        if (!root.commitPendingEdits())
+            return
         if (advancedSettingsPopup.opened)
             advancedSettingsPopup.close()
         else
             advancedSettingsPopup.open()
+    }
+
+    function selectInspectorTab(tab) {
+        if (!root.commitPendingEdits())
+            return
+        root.inspectorTab = tab
     }
 
     function transcriptionBlockReason() {
@@ -313,100 +278,60 @@ ApplicationWindow {
     function requestTranscription() {
         if (!root.workflowCapabilities.canTranscribe)
             return
+        if (!root.commitPendingEdits())
+            return
         if (root.appBackend.projectLoaded)
             transcriptionMergeDialog.open()
         else if (root.appBackend.transcriptionProjectExists())
             overwriteProjectDialog.open()
         else
-            root.appBackend.startTranscription(root.currentSettings(), false)
+            root.appBackend.workflow.startTranscription(root.currentSettings(), false)
     }
 
-    function startNewVideoEdit() {
-        if (!root.appBackend.sourceSelection.video)
-            root.appBackend.browseVideoFile()
-        if (!root.appBackend.sourceSelection.video || root.appBackend.projectLoaded)
-            return
-        if (root.appBackend.transcriptionProjectExists())
-            root.appBackend.loadProject(root.appBackend.projectSavePath)
-        else
-            root.appBackend.createEmptyProject()
-    }
-
-    function hasTranscriptionAudio() {
-        if (root.appBackend.speakers.length > 0)
-            return true
-        for (var index = 0; index < root.appBackend.audioTracks.length; ++index) {
-            if (String(root.appBackend.audioTracks[index].selector || "").length > 0)
-                return true
-        }
-        return false
-    }
-
-    function welcomeTranscriptionBlockReason() {
-        if (!root.appBackend.sourceSelection.video || !root.hasTranscriptionAudio())
-            return ""
-        return root.workflowCapabilities.canTranscribe ? "" : root.transcriptionBlockReason()
-    }
-
-    function startTranscriptionFromWelcome() {
-        var executionSettings = JSON.parse(JSON.stringify(root.currentSettings()))
-        if (!root.appBackend.sourceSelection.video || !root.hasTranscriptionAudio()) {
-            sourcePopup.open()
-            return
-        }
-        if (!root.workflowCapabilities.canTranscribe)
-            return
-        if (!root.appBackend.projectLoaded && root.appBackend.transcriptionProjectExists()) {
-            root.pendingWelcomeTranscriptionRequest = {
-                "settings": executionSettings,
-                "sources": JSON.parse(JSON.stringify(root.appBackend.sourceSelection)),
-                "projectPath": String(root.appBackend.projectSavePath)
-            }
+    ProjectStartFlow {
+        id: projectStartFlow
+        appBackend: root.appBackend
+        workflowCapabilities: root.workflowCapabilities
+        settingsProvider: root.currentSettings
+        onSourceSettingsRequested: root.openSourceSettings()
+        onProcessingSettingsRequested: root.toggleSettingsPopup()
+        onOverwriteConfirmationRequested: function(request) {
+            root.pendingWelcomeTranscriptionRequest = request
             overwriteProjectDialog.open()
-            return
         }
-        if (!root.appBackend.projectLoaded && !root.appBackend.createEmptyProject())
+    }
+
+    function performSubtitleEdit(action, atSeconds) {
+        if (root.appBackend.running)
             return
-        root.appBackend.startTranscription(executionSettings, true)
-    }
-
-    function canSplitSelectedSegment(positionMs) {
-        var index = root.appBackend.selectedSegmentIndex
-        var segmentCount = root.appBackend.segmentCount
-        if (index < 0 || index >= segmentCount)
-            return false
-        var segment = root.appBackend.segmentAt(index)
-        var seconds = Number(positionMs) / 1000
-        return seconds > Number(segment.start) + 0.05 && seconds < Number(segment.end) - 0.05
-    }
-
-    function beginSubtitleDraft(segmentIndex, text) {
-        root.editorDraftSegmentIndex = segmentIndex
-        root.editorDraftText = String(text)
-    }
-
-    function updateSubtitleDraft(segmentIndex, text) {
-        if (root.editorDraftSegmentIndex !== segmentIndex)
-            root.editorDraftSegmentIndex = segmentIndex
-        root.editorDraftText = String(text)
-    }
-
-    function clearSubtitleDraft(segmentIndex) {
-        if (root.editorDraftSegmentIndex !== segmentIndex)
+        if (!root.commitPendingEdits())
             return
-        root.editorDraftSegmentIndex = -1
-        root.editorDraftText = ""
+        switch (action) {
+        case "add": root.appBackend.subtitles.addSegment(atSeconds); break
+        case "delete": root.appBackend.subtitles.deleteSelectedSegment(); break
+        case "split": root.appBackend.subtitles.splitSelectedSegment(atSeconds); break
+        case "undo": root.appBackend.subtitles.undoSubtitleEdit(); break
+        case "redo": root.appBackend.subtitles.redoSubtitleEdit(); break
+        }
     }
 
-    function subtitlePreviewText(segmentData) {
-        var sourceIndex = Number(segmentData.sourceIndex)
-        if ((root.editorMode || root.appBackend.currentEditMode === "subtitle")
-                && sourceIndex === root.editorDraftSegmentIndex)
-            return root.appBackend.formatSubtitlePreview(sourceIndex, root.editorDraftText)
-        if (segmentData.preview_text !== undefined)
-            return String(segmentData.preview_text)
-        return String(segmentData.text || "")
+    SubtitleEditorState {
+        id: subtitleEditorState
+        subtitles: root.appBackend.subtitles
+        running: root.appBackend.running
+        projectPath: root.appBackend.projectPath
+        previewEnabled: root.editorMode || root.appBackend.workspace.currentEditMode === "subtitle"
     }
+    readonly property var subtitleEditorColors: ({
+        panel: root.panel,
+        raised: root.raised,
+        border: root.border,
+        textPrimary: root.textPrimary,
+        textMuted: root.textMuted,
+        acid: root.acid,
+        amber: root.amber,
+        danger: root.danger
+    })
 
     function editModeTitle(mode) {
         return {"subtitle": "字幕", "cut": "カット", "audio": "音量"}[mode] || "編集"
@@ -421,14 +346,16 @@ ApplicationWindow {
     }
 
     function selectWorkspaceMode(mode) {
-        var changed = root.appBackend.selectEditMode(mode)
-        return changed || root.appBackend.currentEditMode === mode
+        if (!root.commitPendingEdits())
+            return false
+        var changed = root.appBackend.workspace.selectEditMode(mode)
+        return changed || root.appBackend.workspace.currentEditMode === mode
     }
 
     function syncSharedPlayerToPlayhead() {
         // The shared player always renders source media. Output-timeline
         // positions are converted once by the backend's shared mapping.
-        var sourcePosition = Number(root.appBackend.editorPlayhead.sourcePositionMs || 0)
+        var sourcePosition = Number(root.appBackend.workspace.editorPlayhead.sourcePositionMs || 0)
         if (Math.abs(mainPlayer.position - sourcePosition) <= 1)
             return false
         root.pendingSharedSourcePosition = sourcePosition
@@ -442,22 +369,22 @@ ApplicationWindow {
 
     function seekSharedPlayer(positionMilliseconds, basis) {
         var position = Math.max(0, Math.round(Number(positionMilliseconds) || 0))
-        var timelineBasis = basis || String(root.appBackend.editorPlayhead.basis || "source")
-        var changed = root.appBackend.setEditorPlayhead(position, timelineBasis)
+        var timelineBasis = basis || String(root.appBackend.workspace.editorPlayhead.basis || "source")
+        var changed = root.appBackend.workspace.setEditorPlayhead(position, timelineBasis)
         if (!changed)
             root.syncSharedPlayerToPlayhead()
     }
 
     function enforceCutPreview(positionMilliseconds) {
-        if (!root.appBackend.cutTimeline.hasCuts
+        if (!root.appBackend.workspace.cutTimeline.hasCuts
                 || mainPlayer.playbackState !== MediaPlayer.PlayingState)
             return false
         var current = Math.max(0, Math.round(Number(positionMilliseconds) || 0))
-        var next = root.appBackend.nextCutPreviewSourceMs(current)
+        var next = root.appBackend.workspace.nextCutPreviewSourceMs(current)
         if (next <= current + 1)
             return false
         root.seekSharedPlayer(next, "source")
-        if (next >= Number(root.appBackend.cutTimeline.sourceDuration || 0) * 1000)
+        if (next >= Number(root.appBackend.workspace.cutTimeline.sourceDuration || 0) * 1000)
             mainPlayer.pause()
         return true
     }
@@ -475,7 +402,7 @@ ApplicationWindow {
 
     function syncEditorPlayhead(positionMs, syncSelection) {
         var resolvedPosition = Math.max(0, Math.round(Number(positionMs) || 0))
-        root.appBackend.setWorkspacePlayerState(
+        root.appBackend.workspace.setWorkspacePlayerState(
             "normal-video",
             resolvedPosition,
             mainPlayer.playbackState === MediaPlayer.PlayingState
@@ -488,21 +415,21 @@ ApplicationWindow {
         } else if (!root.applyingSharedSeek) {
             // The shared player always reports source-media positions. Keeping
             // that basis here avoids applying an output-to-source mapping twice.
-            root.appBackend.setEditorPlayhead(resolvedPosition, "source")
+            root.appBackend.workspace.setEditorPlayhead(resolvedPosition, "source")
         }
         if (syncSelection
                 && root.editorDraftSegmentIndex < 0
                 && (root.editorMode
                     || (root.activeOverlay === ""
-                        && root.appBackend.currentEditMode === "subtitle")))
-            root.appBackend.selectSegmentAtTime(
-                Number(root.appBackend.editorPlayhead.sourcePositionMs) / 1000
+                        && root.appBackend.workspace.currentEditMode === "subtitle")))
+            root.appBackend.subtitles.selectSegmentAtTime(
+                Number(root.appBackend.workspace.editorPlayhead.sourcePositionMs) / 1000
             )
     }
 
     function syncEditorSelectionFromActiveSegments(activeSegments) {
         var subtitleSelectionActive = root.editorMode
-            || (root.activeOverlay === "" && root.appBackend.currentEditMode === "subtitle")
+            || (root.activeOverlay === "" && root.appBackend.workspace.currentEditMode === "subtitle")
         if (!subtitleSelectionActive
                 || root.editorDraftSegmentIndex >= 0
                 || !activeSegments
@@ -510,41 +437,46 @@ ApplicationWindow {
             return
         var sourceIndex = Number(activeSegments[activeSegments.length - 1].sourceIndex)
         if (isFinite(sourceIndex) && sourceIndex >= 0)
-            root.appBackend.selectSegment(Math.floor(sourceIndex))
+            root.appBackend.subtitles.selectSegment(Math.floor(sourceIndex))
     }
 
     function openEditorScreen() {
+        if (!root.commitPendingEdits())
+            return
         root.closeSettingsPopup()
-        root.appBackend.selectEditMode("subtitle")
+        root.appBackend.workspace.selectEditMode("subtitle")
         if (!root.mixerMode) {
             root.editorPositionCache = mainPlayer.position
             mainPlayer.pause()
         } else
-            root.appBackend.stopAudioMixerPreview()
+            root.appBackend.audio.stopAudioMixerPreview()
         root.activeOverlay = "editor"
     }
 
     function closeEditorScreen() {
-        if (root.appBackend.running)
-            return
+        if (!root.commitPendingEdits())
+            return false
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
-        mainPlayer.videoOutput = mainVideo
+        mainPlayer.videoOutput = mainPreview.videoOutputItem
         root.activeOverlay = ""
+        return true
     }
 
     function openMixerScreen() {
+        if (!root.commitPendingEdits())
+            return
         root.closeSettingsPopup()
-        if (!root.appBackend.selectEditMode("audio") && root.appBackend.currentEditMode !== "audio")
+        if (!root.appBackend.workspace.selectEditMode("audio") && root.appBackend.workspace.currentEditMode !== "audio")
             return
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
-        root.appBackend.prepareAudioMixerPreview()
+        root.appBackend.audio.prepareAudioMixerPreview()
         root.activeOverlay = "mixer"
     }
 
     function closeMixerScreen() {
-        root.appBackend.stopAudioMixerPreview()
+        root.appBackend.audio.stopAudioMixerPreview()
         mainPlayer.position = root.editorPositionCache
         root.activeOverlay = ""
     }
@@ -552,10 +484,12 @@ ApplicationWindow {
     function openDictionaryScreen() {
         if (root.appBackend.running)
             return
+        if (!root.commitPendingEdits())
+            return
         root.closeSettingsPopup()
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
-        root.appBackend.stopAudioMixerPreview()
+        root.appBackend.audio.stopAudioMixerPreview()
         root.activeOverlay = "dictionary"
     }
 
@@ -567,36 +501,147 @@ ApplicationWindow {
     function openShortWorkspace() {
         if (root.appBackend.running)
             return
+        if (!root.commitPendingEdits())
+            return
         root.closeSettingsPopup()
         root.editorPositionCache = mainPlayer.position
         mainPlayer.pause()
-        root.appBackend.stopAudioMixerPreview()
-        root.appBackend.setWorkspacePlayerState("normal-video", mainPlayer.position, false)
-        root.appBackend.switchWorkspace("short-artifact")
+        root.appBackend.audio.stopAudioMixerPreview()
+        root.appBackend.workspace.setWorkspacePlayerState("normal-video", mainPlayer.position, false)
+        root.appBackend.workspace.switchWorkspace("short-artifact")
     }
 
     function closeShortWorkspace() {
-        if (!root.appBackend.switchWorkspace("normal-video"))
+        // Loader.item の型は QObject だが、読み込み先は ShortModeScreen。
+        // qmllint disable missing-property
+        if (shortModeLoader.item && !shortModeLoader.item.commitPendingEdits())
             return
-        var playerState = root.appBackend.workspacePlayerState
+        // qmllint enable missing-property
+        if (!root.appBackend.workspace.switchWorkspace("normal-video"))
+            return
+        var playerState = root.appBackend.workspace.workspacePlayerState
         mainPlayer.position = playerState
             ? Number(playerState.positionMs || 0)
             : root.editorPositionCache
     }
 
-    function volumePercentToDb(percent) {
-        var value = Math.max(0, Number(percent) || 0)
-        return value <= 0 ? -60 : Math.max(-60, Math.min(6, 20 * Math.log(value / 100) / Math.LN10))
+    function commitInputMethod() {
+        // 変換中に保存するとOSごとの確定結果が異なるため、先に利用者の確定を待つ。
+        var focusedInput = root.activeFocusItem
+        // qmllint disable missing-property
+        var composing = focusedInput && focusedInput.inputMethodComposing === true
+        // qmllint enable missing-property
+        if (composing) {
+            root.appBackend.reportPendingInputMethod()
+            return false
+        }
+        // Qt.inputMethodは型情報上QObjectだが、実体のQInputMethodはcommit()を公開する。
+        // qmllint disable missing-property
+        Qt.inputMethod.commit()
+        composing = focusedInput && focusedInput.inputMethodComposing === true
+        // qmllint enable missing-property
+        if (composing) {
+            root.appBackend.reportPendingInputMethod()
+            return false
+        }
+        return true
     }
 
-    function dbToVolumePercent(db) {
-        var value = Number(db)
-        return value <= -60 ? 0 : Math.max(0, Math.min(200, 100 * Math.pow(10, value / 20)))
+    function commitPendingEdits() {
+        if (root.appBackend.running)
+            return true
+        // OSによるクリック時の差を避け、フォーカス終了による入力反映を完了する。
+        if (!root.commitInputMethod())
+            return false
+        if (subtitleEditorState.hasIncompleteTimeEdit) {
+            root.appBackend.reportIncompleteSubtitleTime()
+            return false
+        }
+        root.contentItem.forceActiveFocus()
+        subtitleEditorState.commitSubtitleDraft()
+        if (!subtitleEditorState.commitTimeDraft()) {
+            root.appBackend.reportIncompleteSubtitleTime()
+            return false
+        }
+        return true
+    }
+
+    // Item参照は、保存に伴って入力欄が破棄された場合にnullになる。
+    property Item saveShortcutFocusTarget: null
+
+    function textSelection(item: var): var {
+        if (!item || item.cursorPosition === undefined || item.select === undefined)
+            return null
+        return {start: item.selectionStart, end: item.selectionEnd, cursor: item.cursorPosition}
+    }
+
+    function restoreTextSelection(item: var, selection: var) {
+        if (!item || !selection)
+            return
+        if (selection.cursor === selection.start)
+            item.select(selection.end, selection.start)
+        else
+            item.select(selection.start, selection.end)
+    }
+
+    function saveProjectFromShortcut() {
+        if (!root.commitInputMethod())
+            return false
+        root.saveShortcutFocusTarget = root.activeFocusItem
+        var selection = root.textSelection(root.saveShortcutFocusTarget)
+        var saved = root.saveProject()
+        if (root.saveShortcutFocusTarget
+                && root.saveShortcutFocusTarget.visible
+                && root.saveShortcutFocusTarget.enabled) {
+            root.saveShortcutFocusTarget.forceActiveFocus()
+            root.restoreTextSelection(root.saveShortcutFocusTarget, selection)
+        }
+        root.saveShortcutFocusTarget = null
+        return saved
+    }
+
+    function saveProject() {
+        if (root.appBackend.running)
+            return false
+        if (!root.commitPendingEdits())
+            return false
+        return root.appBackend.saveProject()
+    }
+
+    function browseProjectFile() {
+        if (!root.commitPendingEdits())
+            return
+        root.appBackend.browseProjectFile()
+    }
+
+    function openSourceSettings() {
+        if (!root.commitPendingEdits())
+            return
+        sourcePopup.open()
+    }
+
+    function browseProjectSaveAs() {
+        if (!root.commitPendingEdits())
+            return
+        root.appBackend.browseProjectSaveAs()
+    }
+
+    function renderVideo() {
+        if (!root.commitPendingEdits())
+            return
+        root.appBackend.workflow.renderVideo(root.currentSettings())
+    }
+
+    function buildSubtitlePreview() {
+        if (!root.commitPendingEdits())
+            return
+        root.appBackend.subtitles.buildSubtitlePreview(root.currentSettings())
     }
 
     function renderFromEditor() {
-        root.closeEditorScreen()
-        root.appBackend.renderVideo(root.currentSettings())
+        if (!root.closeEditorScreen())
+            return
+        root.renderVideo()
     }
 
     function stamp(seconds) {
@@ -606,24 +651,6 @@ ApplicationWindow {
         var remainder = (safe % 60).toFixed(2)
         return (hours > 0 ? String(hours).padStart(2, "0") + ":" : "")
             + String(minutes).padStart(2, "0") + ":" + String(remainder).padStart(5, "0")
-    }
-
-    function speakerColor(style) {
-        var speakers = root.projectSpeakerCache
-        for (var i = 0; i < speakers.length; ++i) {
-            if (speakers[i].style === style)
-                return speakers[i].color
-        }
-        return root.amber
-    }
-
-    function laneForStyle(style) {
-        var speakers = root.projectSpeakerCache
-        for (var i = 0; i < speakers.length; ++i) {
-            if (speakers[i].style === style)
-                return i
-        }
-        return 0
     }
 
     component PanelTitle: Text {
@@ -711,398 +738,6 @@ ApplicationWindow {
         }
     }
 
-    component SubtitleTimeline: Rectangle {
-        id: timelineRoot
-        property MediaPlayer player
-        property real pixelsPerSecond: 40
-        property real snapSeconds: 0.1
-        property int laneHeight: 42
-        readonly property int rulerHeight: 28
-        readonly property int laneInset: 3
-        property bool editable: true
-        property bool showSegments: true
-        property bool showTrackVolume: false
-        property var seekHandler: null
-        property var lanes: root.projectSpeakerCache
-        property var waveforms: root.subtitleWaveformCache
-        property alias viewportX: timelineFlick.contentX
-        property alias viewportY: timelineFlick.contentY
-        property var visibleSegments: []
-        property var visibleRulerTicks: []
-
-        function refreshViewport() {
-            if (timelineRoot.pixelsPerSecond <= 0)
-                return
-            var pixels = timelineRoot.pixelsPerSecond
-            var padding = Math.max(2, timelineFlick.width / pixels * 0.25)
-            var viewportStart = Math.max(0, timelineFlick.contentX / pixels - padding)
-            var viewportEnd = (timelineFlick.contentX + timelineFlick.width) / pixels + padding
-            timelineRoot.visibleSegments = timelineRoot.showSegments
-                ? root.appBackend.visibleSubtitleSegments(viewportStart, viewportEnd)
-                : []
-
-            var ticks = []
-            var firstTick = Math.max(0, Math.floor(viewportStart / 10) * 10)
-            var lastTick = Math.ceil(viewportEnd / 10) * 10
-            for (var tick = firstTick; tick <= lastTick; tick += 10)
-                ticks.push(tick)
-            timelineRoot.visibleRulerTicks = ticks
-        }
-
-        function followPlaybackPosition(positionMs) {
-            if (timelineRoot.pixelsPerSecond <= 0 || timelineFlick.width <= 0)
-                return
-            var targetX = Math.max(0, Number(positionMs) / 1000 * timelineRoot.pixelsPerSecond)
-            var viewportWidth = timelineFlick.width
-            var anchorX = viewportWidth * 0.35
-            var currentX = timelineFlick.contentX
-            var desiredX = currentX
-            if (targetX < currentX || targetX > currentX + viewportWidth)
-                desiredX = targetX - anchorX
-            else if (timelineRoot.player
-                     && timelineRoot.player.playbackState === MediaPlayer.PlayingState
-                     && targetX > currentX + anchorX)
-                desiredX = targetX - anchorX
-            var maximumX = Math.max(0, timelineFlick.contentWidth - viewportWidth)
-            desiredX = Math.max(0, Math.min(maximumX, desiredX))
-            if (Math.abs(desiredX - currentX) > 0.5)
-                timelineFlick.contentX = desiredX
-        }
-
-        function laneForItem(item) {
-            var key = item && item.lane_id !== undefined ? item.lane_id : (item ? item.style : "")
-            for (var index = 0; index < timelineRoot.lanes.length; ++index) {
-                var lane = timelineRoot.lanes[index]
-                var laneKey = lane && lane.lane_id !== undefined ? lane.lane_id : lane.style
-                if (laneKey === key)
-                    return index
-            }
-            return 0
-        }
-
-        onPixelsPerSecondChanged: timelineRoot.refreshViewport()
-        signal segmentActivated(int index)
-        Connections {
-            target: root.appBackend
-            function onSegmentsChanged() { Qt.callLater(timelineRoot.refreshViewport) }
-        }
-        Connections {
-            target: timelineRoot.player
-            function onPositionChanged() {
-                if (timelineRoot.player)
-                    timelineRoot.followPlaybackPosition(timelineRoot.player.position)
-            }
-        }
-
-        color: "#0E1311"
-        border.color: root.border
-        radius: 10
-        clip: true
-
-        Flickable {
-            id: timelineFlick
-            anchors.fill: parent
-            anchors.leftMargin: 86
-            clip: true
-            interactive: true
-            boundsBehavior: Flickable.StopAtBounds
-            contentWidth: Math.max(width, root.appBackend.projectDuration * timelineRoot.pixelsPerSecond + 120)
-            contentHeight: timelineRoot.rulerHeight + Math.max(1, timelineRoot.lanes.length) * timelineRoot.laneHeight
-            onContentXChanged: timelineRoot.refreshViewport()
-            onWidthChanged: timelineRoot.refreshViewport()
-            Component.onCompleted: timelineRoot.refreshViewport()
-
-            Item {
-                id: timelineCanvas
-                width: timelineFlick.contentWidth
-                height: timelineFlick.contentHeight
-
-                MouseArea {
-                    anchors.fill: parent
-                    acceptedButtons: Qt.LeftButton
-                    onClicked: function(mouse) {
-                        var position = Math.max(0, mouse.x / timelineRoot.pixelsPerSecond * 1000)
-                        if (timelineRoot.seekHandler)
-                            timelineRoot.seekHandler(position)
-                        else if (timelineRoot.player)
-                            timelineRoot.player.position = position
-                    }
-                }
-
-                Repeater {
-                    model: timelineRoot.visibleRulerTicks
-                    delegate: Item {
-                        id: rulerTick
-                        required property var modelData
-                        x: Number(modelData) * timelineRoot.pixelsPerSecond
-                        width: 1
-                        height: timelineCanvas.height
-                        Rectangle { anchors.fill: parent; color: "#26302B" }
-                        Text {
-                            x: 4
-                            y: 3
-                            text: root.stamp(rulerTick.modelData)
-                            color: root.textMuted
-                            font.family: "Cascadia Mono"
-                            font.pixelSize: 9
-                        }
-                    }
-                }
-
-                Repeater {
-                    model: timelineRoot.lanes
-                    delegate: Rectangle {
-                        required property int index
-                        objectName: "timelineLaneBody-" + index
-                        y: timelineRoot.rulerHeight + index * timelineRoot.laneHeight
-                        width: timelineCanvas.width
-                        height: timelineRoot.laneHeight
-                        color: index % 2 === 0 ? "#111714" : "#0D1210"
-                        border.color: "#202923"
-                    }
-                }
-
-                Repeater {
-                    model: timelineRoot.showTrackVolume ? timelineRoot.lanes : []
-                    delegate: Rectangle {
-                        id: trackVolumeBar
-                        objectName: "mixerSequenceVolumeBar"
-                        required property var modelData
-                        property int laneIndex: timelineRoot.laneForItem(modelData)
-                        property real volumeRatio: Math.max(0, Math.min(1, Number(modelData.volume_percent || 0) / 100))
-                        x: Math.max(0, Number(modelData.offset_seconds || 0)) * timelineRoot.pixelsPerSecond
-                        y: timelineRoot.rulerHeight + laneIndex * timelineRoot.laneHeight + (timelineRoot.laneHeight - height) / 2
-                        width: Math.max(4, Number(modelData.duration_seconds || 0) * timelineRoot.pixelsPerSecond)
-                        height: Math.max(3, (timelineRoot.laneHeight - 12) * volumeRatio)
-                        radius: 3
-                        color: modelData.color || root.amber
-                        opacity: modelData.audible ? 0.32 : 0.09
-                    }
-                }
-
-                Repeater {
-                    model: timelineRoot.waveforms
-                    delegate: Item {
-                        id: waveDelegate
-                        required property var modelData
-                        property int laneIndex: timelineRoot.laneForItem(modelData)
-                        x: Number(modelData.offset_seconds || 0) * timelineRoot.pixelsPerSecond
-                        y: timelineRoot.rulerHeight + laneIndex * timelineRoot.laneHeight + timelineRoot.laneInset
-                        width: Number(modelData.duration_seconds || 0) * timelineRoot.pixelsPerSecond
-                        height: timelineRoot.laneHeight - timelineRoot.laneInset * 2
-                        opacity: modelData.audible === false ? 0.08 : 0.3
-                        Canvas {
-                            anchors.fill: parent
-                            property var peaks: waveDelegate.modelData.peaks || []
-                            property color waveformColor: waveDelegate.modelData.color || root.amber
-                            onPeaksChanged: requestPaint()
-                            onWaveformColorChanged: requestPaint()
-                            onWidthChanged: requestPaint()
-                            onHeightChanged: requestPaint()
-                            onPaint: {
-                                var context = getContext("2d")
-                                context.clearRect(0, 0, width, height)
-                                if (peaks.length === 0)
-                                    return
-                                context.fillStyle = waveformColor
-                                var step = width / peaks.length
-                                var barWidth = Math.max(1, step - 0.5)
-                                for (var i = 0; i < peaks.length; ++i) {
-                                    var barHeight = Math.max(1, Number(peaks[i]) * height)
-                                    context.fillRect(
-                                        i * step,
-                                        (height - barHeight) / 2,
-                                        barWidth,
-                                        barHeight
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Repeater {
-                    model: timelineRoot.visibleSegments
-                    delegate: Rectangle {
-                        id: captionClip
-                        required property var modelData
-                        property int sourceIndex: modelData ? Number(modelData.sourceIndex) : -1
-                        objectName: "timelineCaption-" + sourceIndex
-                        // visibleSubtitleSegments returns a flat segment view. Keep
-                        // compatibility with explicitly wrapped diagnostic data.
-                        property var segment: modelData && modelData.segment
-                            ? modelData.segment
-                            : (modelData || ({}))
-                        property real originalX: 0
-                        property real originalWidth: 0
-                        property real pointerStart: 0
-                        visible: sourceIndex >= 0 && segment.start !== undefined && segment.end !== undefined
-                        x: Number(segment.start || 0) * timelineRoot.pixelsPerSecond
-                        y: timelineRoot.rulerHeight + root.laneForStyle(segment.speaker || "") * timelineRoot.laneHeight + timelineRoot.laneInset
-                        width: Math.max(10, (Number(segment.end || 0) - Number(segment.start || 0)) * timelineRoot.pixelsPerSecond)
-                        height: timelineRoot.laneHeight - timelineRoot.laneInset * 2 - 1
-                        radius: 6
-                        color: root.speakerColor(segment.speaker || "")
-                        opacity: root.appBackend.selectedSegmentIndex === sourceIndex ? 1 : 0.78
-                        border.color: root.appBackend.selectedSegmentIndex === sourceIndex ? root.textPrimary : "#66101010"
-                        border.width: root.appBackend.selectedSegmentIndex === sourceIndex ? 2 : 1
-
-                        Text {
-                            anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            text: captionClip.segment.text || ""
-                            color: "#10140F"
-                            font.family: captionClip.segment.subtitle_font_family || "Yu Gothic UI"
-                            font.pixelSize: 10
-                            font.weight: Font.DemiBold
-                            elide: Text.ElideRight
-                            verticalAlignment: Text.AlignVCenter
-                        }
-
-                        MouseArea {
-                            id: moveArea
-                            anchors.fill: parent
-                            anchors.leftMargin: 7
-                            anchors.rightMargin: 7
-                            enabled: timelineRoot.editable
-                            cursorShape: Qt.SizeHorCursor
-                            drag.target: captionClip
-                            drag.axis: Drag.XAxis
-                            drag.minimumX: 0
-                            drag.maximumX: Math.max(0, timelineCanvas.width - captionClip.width)
-                            onPressed: {
-                                root.appBackend.selectSegment(captionClip.sourceIndex)
-                                timelineRoot.segmentActivated(captionClip.sourceIndex)
-                            }
-                            onReleased: root.appBackend.moveSegment(
-                                captionClip.sourceIndex,
-                                captionClip.x / timelineRoot.pixelsPerSecond,
-                                (captionClip.x + captionClip.width) / timelineRoot.pixelsPerSecond,
-                                timelineRoot.snapSeconds
-                            )
-                        }
-
-                        Rectangle {
-                            id: leftHandle
-                            z: 3
-                            anchors.left: parent.left
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 7
-                            height: parent.height
-                            radius: 3
-                            color: "#EEFFFFFF"
-                            visible: timelineRoot.editable && root.appBackend.selectedSegmentIndex === captionClip.sourceIndex
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.SizeHorCursor
-                                onPressed: function(mouse) {
-                                    captionClip.originalX = captionClip.x
-                                    captionClip.originalWidth = captionClip.width
-                                    captionClip.pointerStart = mapToItem(timelineCanvas, mouse.x, mouse.y).x
-                                }
-                                onPositionChanged: function(mouse) {
-                                    if (!pressed) return
-                                    var pointer = mapToItem(timelineCanvas, mouse.x, mouse.y).x
-                                    var delta = Math.min(captionClip.originalWidth - 4, pointer - captionClip.pointerStart)
-                                    captionClip.x = Math.max(0, captionClip.originalX + delta)
-                                    captionClip.width = captionClip.originalWidth - (captionClip.x - captionClip.originalX)
-                                }
-                                onReleased: root.appBackend.resizeSegmentStart(
-                                    captionClip.sourceIndex,
-                                    captionClip.x / timelineRoot.pixelsPerSecond,
-                                    timelineRoot.snapSeconds
-                                )
-                            }
-                        }
-
-                        Rectangle {
-                            id: rightHandle
-                            z: 3
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 7
-                            height: parent.height
-                            radius: 3
-                            color: "#EEFFFFFF"
-                            visible: timelineRoot.editable && root.appBackend.selectedSegmentIndex === captionClip.sourceIndex
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.SizeHorCursor
-                                onPressed: function(mouse) {
-                                    captionClip.originalWidth = captionClip.width
-                                    captionClip.pointerStart = mapToItem(timelineCanvas, mouse.x, mouse.y).x
-                                }
-                                onPositionChanged: function(mouse) {
-                                    if (!pressed) return
-                                    var pointer = mapToItem(timelineCanvas, mouse.x, mouse.y).x
-                                    captionClip.width = Math.max(4, captionClip.originalWidth + pointer - captionClip.pointerStart)
-                                }
-                                onReleased: root.appBackend.resizeSegmentEnd(
-                                    captionClip.sourceIndex,
-                                    (captionClip.x + captionClip.width) / timelineRoot.pixelsPerSecond,
-                                    timelineRoot.snapSeconds
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Rectangle {
-                    z: 10
-                    x: Math.max(0, (timelineRoot.player ? timelineRoot.player.position : 0) / 1000 * timelineRoot.pixelsPerSecond)
-                    y: 0
-                    width: 2
-                    height: timelineCanvas.height
-                    color: root.acid
-                    Rectangle {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: 9
-                        height: 9
-                        radius: 5
-                        color: root.acid
-                    }
-                }
-            }
-            ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AlwaysOn }
-            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-        }
-
-        Column {
-            anchors.left: parent.left
-            y: timelineRoot.rulerHeight - timelineFlick.contentY
-            width: 86
-            height: timelineRoot.lanes.length * timelineRoot.laneHeight
-            Repeater {
-                model: timelineRoot.lanes
-                delegate: Rectangle {
-                    id: laneLabel
-                    required property int index
-                    required property var modelData
-                    objectName: "timelineLaneLabel-" + index
-                    width: 86
-                    height: timelineRoot.laneHeight
-                    color: "#171E1A"
-                    border.color: root.border
-                    Row {
-                        anchors.centerIn: parent
-                        spacing: 6
-                        Rectangle { width: 7; height: 22; radius: 3; color: laneLabel.modelData.color }
-                        Text {
-                            width: 62
-                            text: laneLabel.modelData.name
-                            color: root.textPrimary
-                            font.family: "Yu Gothic UI"
-                            font.pixelSize: 10
-                            elide: Text.ElideRight
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     header: WorkspaceHeader {
         objectName: "workspaceHeader"
         visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortWorkspaceActive
@@ -1110,21 +745,21 @@ ApplicationWindow {
         projectName: root.appBackend.projectName
         projectDirty: root.appBackend.projectDirty
         sourcePath: root.appBackend.sourceSelection.video
-        workspaceKind: root.appBackend.currentWorkspace
-        currentEditMode: root.appBackend.currentEditMode
+        workspaceKind: root.appBackend.workspace.currentWorkspace
+        currentEditMode: root.appBackend.workspace.currentEditMode
         activityText: root.userFacingStatusLabel(root.appBackend.stage, root.appBackend.status)
         applicationVersion: root.appBackend.applicationInfo.version
         running: root.appBackend.running
-        updateBusy: root.appBackend.updateBusy
+        updateBusy: root.appBackend.updates.updateBusy
         rightInset: root.codexDrawerHeaderInset
         outputFolderAvailable: Boolean(root.appBackend.videoOutputDirectory)
         canRender: Boolean(root.workflowCapabilities.canRenderNormal || root.workflowCapabilities.normalRenderNeedsOutput)
         renderNeedsOutput: Boolean(root.workflowCapabilities.normalRenderNeedsOutput)
         renderBlockReason: String(root.workflowCapabilities.normalRenderReason || "")
         aiAuthenticated: root.codexAuthenticated
-        aiLoginAvailable: Boolean(root.appBackend.aiChatLoginAvailable)
-        aiAuthState: root.appBackend.codexAuthState
-        aiConnectionState: root.appBackend.codexConnectionState
+        aiLoginAvailable: Boolean(root.appBackend.ai.aiChatLoginAvailable)
+        aiAuthState: root.appBackend.ai.codexAuthState
+        aiConnectionState: root.appBackend.ai.codexConnectionState
         panelColor: root.panel
         raisedColor: root.raised
         borderColor: root.border
@@ -1132,23 +767,26 @@ ApplicationWindow {
         mutedColor: root.textMuted
         accentColor: root.acid
         warningColor: root.amber
-        onUpdateCheckRequested: root.appBackend.checkForUpdates()
-        onProjectOpenRequested: root.appBackend.browseProjectFile()
-        onSourceSettingsRequested: sourcePopup.open()
-        onSaveRequested: root.appBackend.saveProject()
+        onUpdateCheckRequested: root.appBackend.updates.checkForUpdates()
+        onProjectOpenRequested: root.browseProjectFile()
+        onSourceSettingsRequested: root.openSourceSettings()
+        onSaveRequested: root.saveProject()
         onOutputFolderRequested: root.appBackend.openOutputFolder()
         onAiAssistantRequested: {
-            if (root.codexAuthenticated)
+            if (root.loginInInspector) {
+                root.selectInspectorTab(root.inspectorTab === "codex" ? "settings" : "codex")
+            } else if (root.codexAuthenticated) {
                 root.codexDrawerOpen = !root.codexDrawerOpen
-            else if (root.appBackend.codexAuthState === "login_pending")
-                root.appBackend.openAIProviderLoginPage()
-            else if (["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0)
-                root.appBackend.reconnectAIChat()
-            else
-                root.appBackend.startAIProviderLogin()
+            } else if (root.appBackend.ai.codexAuthState === "login_pending") {
+                root.appBackend.ai.openAIProviderLoginPage()
+            } else if (["error", "disconnected"].indexOf(root.appBackend.ai.codexConnectionState) >= 0) {
+                root.appBackend.ai.reconnectAIChat()
+            } else {
+                root.appBackend.ai.startAIProviderLogin()
+            }
         }
         onShortWorkspaceRequested: root.openShortWorkspace()
-        onRenderRequested: root.appBackend.renderVideo(root.currentSettings())
+        onRenderRequested: root.renderVideo()
     }
 
     Dialog {
@@ -1156,8 +794,11 @@ ApplicationWindow {
         objectName: "updateDialog"
         anchors.centerIn: parent
         modal: true
+        closePolicy: root.appBackend.updates.updateDownloadActive
+            || (root.appBackend.running && root.appBackend.workflow.activeJob === "update")
+            ? Popup.NoAutoClose : Popup.CloseOnEscape
         title: "更新の確認"
-        visible: root.appBackend.updateAvailable && (!root.appBackend.updateBusy || root.appBackend.updateDownloadActive)
+        visible: root.appBackend.updates.updateAvailable && (!root.appBackend.updates.updateBusy || root.appBackend.updates.updateDownloadActive)
         standardButtons: Dialog.NoButton
         width: 500
         height: 320
@@ -1165,10 +806,10 @@ ApplicationWindow {
             anchors.fill: parent
             anchors.margins: 20
             spacing: 8
-            Text { text: "現在のバージョン: " + root.appBackend.updateCurrentVersion; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 12 }
-            Text { text: "最新バージョン: " + root.appBackend.updateLatestVersion; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 12 }
+            Text { text: "現在のバージョン: " + root.appBackend.updates.updateCurrentVersion; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 12 }
+            Text { text: "最新バージョン: " + root.appBackend.updates.updateLatestVersion; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 12 }
             Text {
-                text: root.appBackend.updateReleaseNotes
+                text: root.appBackend.updates.updateReleaseNotes
                 color: root.textMuted
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 10
@@ -1177,8 +818,8 @@ ApplicationWindow {
                 Layout.fillHeight: true
             }
             Text {
-                visible: root.appBackend.updatePackageSize > 0
-                text: "ダウンロードサイズ: " + root.formatBytes(root.appBackend.updatePackageSize)
+                visible: root.appBackend.updates.updatePackageSize > 0
+                text: "ダウンロードサイズ: " + root.formatBytes(root.appBackend.updates.updatePackageSize)
                 color: root.textMuted
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 11
@@ -1186,248 +827,69 @@ ApplicationWindow {
             }
             ProgressBar {
                 objectName: "updateDownloadProgressBar"
-                visible: root.appBackend.updateDownloadActive
+                visible: root.appBackend.updates.updateDownloadActive
                 from: 0
-                to: root.appBackend.updateDownloadTotal > 0 ? root.appBackend.updateDownloadTotal : 1
-                value: root.appBackend.updateDownloadBytes
+                to: root.appBackend.updates.updateDownloadTotal > 0 ? root.appBackend.updates.updateDownloadTotal : 1
+                value: root.appBackend.updates.updateDownloadBytes
                 Layout.fillWidth: true
             }
             RowLayout {
-                Button { objectName: "applyUpdateButton"; text: root.appBackend.updatePackageReady ? "再起動して更新" : "アップデート"; visible: root.appBackend.stage !== "UPDATE"; enabled: !root.appBackend.running && !root.appBackend.projectDirty && !root.appBackend.updateBusy; onClicked: root.appBackend.applyUpdate() }
-                Button { objectName: "cancelUpdateDownloadButton"; text: "ダウンロードをキャンセル"; visible: root.appBackend.updateDownloadActive; enabled: true; onClicked: root.appBackend.cancelUpdateDownload() }
-                Button { objectName: "restartApplicationButton"; text: "再起動"; visible: root.appBackend.stage === "UPDATE" && !root.appBackend.running; enabled: !root.appBackend.running; onClicked: root.appBackend.restartApplication() }
-                Button { objectName: "dismissUpdateDialogButton"; text: "閉じる"; enabled: !root.appBackend.running && !root.appBackend.updateBusy; onClicked: { root.appBackend.dismissUpdateInfo(); updateDialog.close(); } }
+                Button { objectName: "applyUpdateButton"; text: root.appBackend.updates.updatePackageReady ? "再起動して更新" : "アップデート"; visible: root.appBackend.stage !== "UPDATE"; enabled: !root.appBackend.running && !root.appBackend.projectDirty && !root.appBackend.updates.updateBusy; onClicked: root.appBackend.updates.applyUpdate() }
+                Button { objectName: "cancelUpdateDownloadButton"; text: "ダウンロードをキャンセル"; visible: root.appBackend.updates.updateDownloadActive; enabled: true; onClicked: root.appBackend.updates.cancelUpdateDownload() }
+                Button { objectName: "restartApplicationButton"; text: "再起動"; visible: root.appBackend.stage === "UPDATE" && !root.appBackend.running; enabled: !root.appBackend.running; onClicked: root.appBackend.updates.restartApplication() }
+                Button { objectName: "dismissUpdateDialogButton"; text: "閉じる"; enabled: !root.appBackend.running && !root.appBackend.updates.updateBusy; onClicked: { root.appBackend.updates.dismissUpdateInfo(); updateDialog.close(); } }
             }
         }
     }
 
-        Popup {
-            id: advancedSettingsPopup
-            objectName: "advancedSettingsPopup"
-            // Keep the popup clear of the action bar's right-aligned toggle,
-            // including at the 1220px minimum window width.
-            x: Math.max(12, root.width - width - 430)
-            y: contextActionBar.y + contextActionBar.height + 10
-            width: Math.min(360, root.width - 24)
-            height: Math.max(0, Math.min(620, root.contentItem.height - y - 12))
-            padding: 12
-            modal: false
-            focus: true
-            // The toggle button is outside this non-modal popup. Let the toggle
-            // handler own the close action so an outside press cannot close the
-            // popup before the same press reopens it through onSettingsRequested.
-            closePolicy: Popup.CloseOnEscape
-            onOpened: root.settingsExpanded = true
-            onClosed: root.settingsExpanded = false
-            contentItem: ColumnLayout {
-                objectName: "advancedSettingsPanel"
-                spacing: 10
-
-                SmallButton { objectName: "settingsPopupSaveButton"; Layout.fillWidth: true; text: "設定を保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveSettings(root.currentSettings()) }
-                SmallButton { objectName: "settingsPopupCloseButton"; Layout.fillWidth: true; text: "閉じる"; onClicked: advancedSettingsPopup.close() }
-
-                ScrollView {
-                    id: advancedSettingsScrollView
-                    objectName: "advancedSettingsScrollView"
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
-                    contentWidth: availableWidth
-                    contentHeight: advancedSettingsContent.implicitHeight
-                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                    ScrollBar.vertical: ScrollBar {
-                        objectName: "advancedSettingsVerticalScrollBar"
-                        policy: ScrollBar.AlwaysOn
-                    }
-
-                    ColumnLayout {
-                        id: advancedSettingsContent
-                        objectName: "advancedSettingsContent"
-                        width: advancedSettingsScrollView.availableWidth
-                        spacing: 10
-                        PanelTitle { text: "文字起こしエンジン" }
-                        RowLayout { Layout.fillWidth: true; Text { text: "処理デバイス"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: deviceCombo; objectName: "deviceCombo"; model: ["cuda", "cpu"]; Layout.preferredWidth: 110 } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "Whisperモデル"; color: root.textPrimary; Layout.fillWidth: true } ComboBox { id: modelCombo; objectName: "modelCombo"; model: ["large-v3", "medium", "small"]; Layout.preferredWidth: 130 } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "CPU並列数"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: workersSpin; from: 1; to: 16; value: 4 } }
-                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                        PanelTitle { text: "字幕" }
-                        RowLayout { Layout.fillWidth: true; Text { text: "基準文字サイズ"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: fontSizeSpin; objectName: "fontSizeSpin"; from: 10; to: 900; value: 100; onValueChanged: root.subtitleFontSizePercent = value } Text { text: "%"; color: root.textMuted } }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Text { text: "縁取り色"; color: root.textPrimary; Layout.fillWidth: true }
-                            Button {
-                                id: outlineColorButton
-                                objectName: "outlineColorButton"
-                                property string colorValue: "#000000"
-                                onColorValueChanged: root.subtitleOutlineColor = colorValue
-                                Layout.preferredWidth: 112
-                                Layout.preferredHeight: 32
-                                onClicked: root.openOutlineColorPicker()
-                                contentItem: Row {
-                                    spacing: 7
-                                    Rectangle { width: 20; height: 20; radius: 4; color: outlineColorButton.colorValue; border.color: root.border }
-                                    Text { text: outlineColorButton.colorValue; color: root.textPrimary; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
-                                }
-                                background: Rectangle { radius: 6; color: root.raised; border.color: root.border }
-                            }
-                        }
-                        RowLayout { Layout.fillWidth: true; Text { text: "縁取り太さ"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: outlineThicknessSpin; objectName: "outlineThicknessSpin"; from: 0; to: 20; value: 3; onValueChanged: root.subtitleOutlineThickness = value } Text { text: "px"; color: root.textMuted } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "字幕の音量バランス"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: volumeScaleSpin; objectName: "volumeScaleSpin"; from: 0; to: 50; value: 20 } Text { text: "%"; color: root.textMuted } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "単語間隔"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: gapField; Layout.preferredWidth: 76; text: "0.10" } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "終了余白"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: paddingField; Layout.preferredWidth: 76; text: "0.08" } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "最短表示時間"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: minDurationField; Layout.preferredWidth: 76; text: "0.35" } }
-                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                        PanelTitle { text: "動画・音声" }
-                        RowLayout { Layout.fillWidth: true; Text { text: "動画書き出し"; color: root.textPrimary; Layout.fillWidth: true } Text { objectName: "automaticVideoCodecText"; text: root.appBackend.dependencyStatus.nvenc ? "GPU（自動）" : "CPU（自動）"; color: root.acid; font.family: "Yu Gothic UI" } }
-                        RowLayout { Layout.fillWidth: true; Text { text: "画質"; color: root.textPrimary; Layout.fillWidth: true } SpinBox { id: qualitySpin; objectName: "qualitySpin"; from: 14; to: 28; value: 18 } }
-                        Switch { id: normalizeSwitch; objectName: "normalizeSwitch"; text: "音量を正規化"; checked: true }
-                        RowLayout { Layout.fillWidth: true; Text { text: "目標LUFS"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: lufsField; objectName: "lufsField"; Layout.preferredWidth: 76; text: "-16"; validator: DoubleValidator { bottom: -30; top: -5 } } }
-                        Switch { id: silenceSwitch; objectName: "silenceSwitch"; text: "無音部分をカット" }
-                        RowLayout { Layout.fillWidth: true; enabled: silenceSwitch.checked; opacity: enabled ? 1 : 0.4; Text { text: "最短無音時間"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: silenceField; objectName: "silenceField"; Layout.preferredWidth: 76; text: "1.2" } }
-                        RowLayout { Layout.fillWidth: true; enabled: silenceSwitch.checked; opacity: enabled ? 1 : 0.4; Text { text: "発話余白"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: speechPaddingField; objectName: "speechPaddingField"; Layout.preferredWidth: 76; text: "0.25" } }
-                        RowLayout { Layout.fillWidth: true; enabled: silenceSwitch.checked; opacity: enabled ? 1 : 0.4; Text { text: "無音判定閾値"; color: root.textPrimary; Layout.fillWidth: true } TimeField { id: speechThresholdField; objectName: "speechThresholdField"; Layout.preferredWidth: 76; text: "-40"; validator: DoubleValidator { bottom: -100; top: 0; decimals: 1 } } }
-                        Item { Layout.preferredHeight: 6 }
-                    }
-                }
-            }
+    AdvancedSettingsPopup {
+        id: advancedSettingsPopup
+        appBackend: root.appBackend
+        colors: root.subtitleEditorColors
+        defaultSubtitleFontSize: root.defaultSubtitleFontSize
+        // Keep the popup clear of the action bar's right-aligned toggle,
+        // including at the 1220px minimum window width.
+        x: Math.max(12, root.width - width - 430)
+        y: contextActionBar.y + contextActionBar.height + 10
+        width: Math.min(360, root.width - 24)
+        height: Math.max(0, Math.min(620, root.contentItem.height - y - 12))
+        onOpened: root.settingsExpanded = true
+        onClosed: root.settingsExpanded = false
+        onSaveRequested: root.appBackend.saveSettings(root.currentSettings())
+        onOutlineColorRequested: function(currentColor) {
+            root.openOutlineColorPicker(currentColor)
         }
+    }
 
     Component {
         id: subtitleWorkspaceEditorComponent
-
-        Item {
-            objectName: "workspaceSubtitleEditor"
-
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 10
-                spacing: 6
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 5
-                    SmallButton { objectName: "workspaceSubtitleUndoButton"; text: "元に戻す"; enabled: !root.appBackend.running && root.appBackend.canUndo; onClicked: root.appBackend.undoSubtitleEdit() }
-                    SmallButton { objectName: "workspaceSubtitleRedoButton"; text: "やり直す"; enabled: !root.appBackend.running && root.appBackend.canRedo; onClicked: root.appBackend.redoSubtitleEdit() }
-                    SmallButton {
-                        objectName: "workspaceSubtitleAddButton"
-                        text: "+ 字幕追加"
-                        enabled: !root.appBackend.running
-                        onClicked: root.appBackend.addSegment(Number(root.appBackend.editorPlayhead.sourcePositionMs) / 1000)
-                    }
-                    SmallButton {
-                        objectName: "workspaceSubtitleSplitButton"
-                        text: "分割"
-                        enabled: !root.appBackend.running
-                            && root.canSplitSelectedSegment(root.appBackend.editorPlayhead.sourcePositionMs)
-                        onClicked: root.appBackend.splitSelectedSegment(Number(root.appBackend.editorPlayhead.sourcePositionMs) / 1000)
-                    }
-                    SmallButton { objectName: "workspaceSubtitleDeleteButton"; text: "削除"; enabled: !root.appBackend.running && root.appBackend.selectedSegmentIndex >= 0; onClicked: root.appBackend.deleteSelectedSegment() }
-                    Item { Layout.fillWidth: true }
-                    SmallButton { objectName: "workspaceSubtitleSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveProject() }
-                    SmallButton { objectName: "workspaceSubtitlePreviewButton"; text: "プレビュー更新"; enabled: !root.appBackend.running; onClicked: root.appBackend.buildSubtitlePreview(root.currentSettings()) }
-                }
-
-                SubtitleTimeline {
-                    id: workspaceSubtitleTimeline
-                    objectName: "workspaceSubtitleTimeline"
-                    property bool restoringViewport: true
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    player: mainPlayer
-                    pixelsPerSecond: root.editorPixelsPerSecond
-                    snapSeconds: root.snapMilliseconds / 1000
-                    editable: !root.appBackend.running
-                    seekHandler: function(positionMilliseconds) {
-                        root.seekSharedPlayer(positionMilliseconds, "source")
-                    }
-                    onViewportXChanged: {
-                        if (!restoringViewport)
-                            root.editorTimelineScrollX = viewportX
-                    }
-                    onSegmentActivated: function(index) {
-                        var segment = root.appBackend.segmentAt(index)
-                        if (segment)
-                            root.seekSharedPlayer(Number(segment.start) * 1000, "source")
-                    }
-                    Timer {
-                        interval: 0
-                        running: true
-                        repeat: false
-                        onTriggered: {
-                            workspaceSubtitleTimeline.viewportX = root.editorTimelineScrollX
-                            workspaceSubtitleTimeline.restoringViewport = false
-                        }
-                    }
-                }
-            }
+        SubtitleWorkspaceEditor {
+            onEditRequested: function(action, atSeconds) { root.performSubtitleEdit(action, atSeconds) }
+            onSaveRequested: root.saveProject()
+            appBackend: root.appBackend
+            player: mainPlayer
+            editorState: subtitleEditorState
+            colors: root.subtitleEditorColors
+            formatTimestamp: root.stamp
+            onSeekRequested: function(positionMs) { root.seekSharedPlayer(positionMs, "source") }
+            onPreviewRequested: root.buildSubtitlePreview()
         }
     }
 
     Component {
         id: audioWorkspaceEditorComponent
 
-        Item {
-            objectName: "workspaceAudioEditor"
-
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 10
-                spacing: 6
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    PanelTitle { text: "音声タイムライン" }
-                    Text {
-                        text: root.appBackend.audioPreviewPreparing
-                            ? "プレビュー音声を準備中…"
-                            : (workspaceAudioBridge.intentionalSilence
-                                ? "すべての音声トラックが無効です"
-                                : (workspaceAudioBridge.previewReady
-                                    ? "共通プレビューへ接続済み"
-                                    : "ミックスを準備できないため元の音声を再生します"))
-                        color: workspaceAudioBridge.previewReady
-                            || workspaceAudioBridge.intentionalSilence
-                            ? root.acid
-                            : root.textMuted
-                        font.family: "Yu Gothic UI"
-                        font.pixelSize: 9
-                    }
-                    Item { Layout.fillWidth: true }
-                    Text { text: "再生・シークは中央プレビューと共通"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
-                }
-
-                SubtitleTimeline {
-                    id: workspaceAudioTimeline
-                    objectName: "workspaceAudioTimeline"
-                    property bool restoringViewport: true
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    player: mainPlayer
-                    pixelsPerSecond: root.timelinePixelsPerSecond
-                    laneHeight: 34
-                    editable: false
-                    showSegments: false
-                    showTrackVolume: true
-                    lanes: root.appBackend.audioMixerSequenceChannels
-                    waveforms: root.appBackend.audioMixerSequenceChannels
-                    seekHandler: function(positionMilliseconds) {
-                        root.seekSharedPlayer(positionMilliseconds, "source")
-                    }
-                    onViewportXChanged: {
-                        if (!restoringViewport)
-                            root.workspaceAudioTimelineScrollX = viewportX
-                    }
-                    Timer {
-                        interval: 0
-                        running: true
-                        repeat: false
-                        onTriggered: {
-                            workspaceAudioTimeline.viewportX = root.workspaceAudioTimelineScrollX
-                            workspaceAudioTimeline.restoringViewport = false
-                        }
-                    }
-                }
-            }
+        AudioWorkspaceEditor {
+            appBackend: root.appBackend
+            player: mainPlayer
+            previewBridge: workspaceAudioBridge
+            colors: root.subtitleEditorColors
+            formatTimestamp: root.stamp
+            speakers: root.projectSpeakerCache
+            pixelsPerSecond: root.timelinePixelsPerSecond
+            savedViewportX: root.workspaceAudioTimelineScrollX
+            onSeekRequested: function(positionMs) { root.seekSharedPlayer(positionMs, "source") }
+            onViewportChangedByUser: function(viewportX) { root.workspaceAudioTimelineScrollX = viewportX }
         }
     }
 
@@ -1437,8 +899,12 @@ ApplicationWindow {
         SubtitleModeSettings {
             objectName: "workspaceSubtitleSettings"
             backend: root.appBackend
+            editorState: subtitleEditorState
+            // qmllint disable missing-property
+            imeComposing: root.activeFocusItem && root.activeFocusItem.inputMethodComposing === true
+            // qmllint enable missing-property
             speakers: root.projectSpeakerCache
-            fontChoices: root.appBackend.fontChoices
+            fontChoices: root.appBackend.subtitles.fontChoices
             panelColor: root.panel
             raisedColor: root.raised
             borderColor: root.border
@@ -1446,9 +912,10 @@ ApplicationWindow {
             mutedColor: root.textMuted
             accentColor: root.acid
             savedContentY: root.editorCaptionScrollY
-            beginDraft: root.beginSubtitleDraft
-            updateDraft: root.updateSubtitleDraft
-            clearDraft: root.clearSubtitleDraft
+            beginDraft: subtitleEditorState.beginSubtitleDraft
+            updateDraft: subtitleEditorState.updateSubtitleDraft
+            commitDraft: subtitleEditorState.commitSubtitleDraft
+            pendingDraftTextForSegment: subtitleEditorState.pendingTextForSegment
             onSeekRequested: function(positionMilliseconds) {
                 root.seekSharedPlayer(positionMilliseconds, "source")
             }
@@ -1488,7 +955,7 @@ ApplicationWindow {
             objectName: "workspaceCutEditor"
             backend: root.appBackend
             player: mainPlayer
-            timeline: root.appBackend.cutTimeline
+            timeline: root.appBackend.workspace.cutTimeline
             selectionStartMs: root.cutSelectionStartMs
             selectionEndMs: root.cutSelectionEndMs
             selectedCutId: root.selectedCutId
@@ -1518,7 +985,7 @@ ApplicationWindow {
         CutModeSettings {
             objectName: "workspaceCutSettings"
             backend: root.appBackend
-            timeline: root.appBackend.cutTimeline
+            timeline: root.appBackend.workspace.cutTimeline
             selectionStartMs: root.cutSelectionStartMs
             selectionEndMs: root.cutSelectionEndMs
             selectedCutId: root.selectedCutId
@@ -1545,22 +1012,17 @@ ApplicationWindow {
         height: 0
         backend: root.appBackend
         player: mainPlayer
-        active: root.appBackend.currentEditMode === "audio" && mainWorkspace.visible
+        active: root.appBackend.workspace.currentEditMode === "audio" && mainWorkspace.visible
         seekRevision: root.sharedSeekRevision
     }
 
     Connections {
-        target: root.appBackend
+        target: root.appBackend.workspace
 
         function onEditorPlayheadChanged() {
             root.syncSharedPlayerToPlayhead()
         }
 
-        function onCodexChatChanged() {
-            if (root.codexAuthenticated && !root.previousCodexAuthenticated)
-                root.codexDrawerOpen = true
-            root.previousCodexAuthenticated = root.codexAuthenticated
-        }
     }
 
     Timer {
@@ -1568,6 +1030,46 @@ ApplicationWindow {
         interval: 400
         repeat: false
         onTriggered: root.pendingSharedSourcePosition = -1
+    }
+
+    MediaPlayer {
+        id: mainPlayer
+        objectName: "mainWorkspacePlayer"
+        source: root.appBackend.previewUrl
+        videoOutput: mainPreview.videoOutputItem
+        audioOutput: AudioOutput {
+            objectName: "mainWorkspaceAudioOutput"
+            volume: 0.7
+            muted: workspaceAudioBridge.muteSourceAudio
+        }
+        onPositionChanged: {
+            mainPreview.setPlayheadPosition(mainPlayer.position)
+            if (root.enforceCutPreview(mainPlayer.position))
+                return
+            var completedPendingSeek = false
+            if (root.pendingSharedSourcePosition >= 0
+                    && Math.abs(mainPlayer.position - root.pendingSharedSourcePosition) <= 80) {
+                root.pendingSharedSourcePosition = -1
+                sharedSeekGuardTimer.stop()
+                completedPendingSeek = true
+            }
+            if (!completedPendingSeek
+                    && mainPlayer.playbackState !== MediaPlayer.PlayingState)
+                root.syncEditorPlayhead(mainPlayer.position, true)
+        }
+        onDurationChanged: mainPreview.setDuration(mainPlayer.duration)
+        onPlaybackStateChanged: root.syncEditorPlayhead(mainPlayer.position, true)
+    }
+
+    Timer {
+        // Keep the shared playhead current; the overlay handles exact subtitle changes.
+        interval: 100
+        repeat: true
+        running: mainPlayer.playbackState === MediaPlayer.PlayingState
+        onTriggered: {
+            if (!root.enforceCutPreview(mainPlayer.position))
+                root.syncEditorPlayhead(mainPlayer.position, false)
+        }
     }
 
     RowLayout {
@@ -1581,149 +1083,33 @@ ApplicationWindow {
         anchors.rightMargin: root.codexWorkspaceRightInset + 12
         spacing: 10
 
-        Rectangle {
-            objectName: "projectStartScreen"
+        ProjectStartScreen {
             visible: !root.appBackend.projectLoaded
             Layout.fillWidth: true
             Layout.fillHeight: true
-            radius: 14
-            color: root.panel
-            border.color: root.border
-
-            ColumnLayout {
-                anchors.centerIn: parent
-                width: Math.min(640, parent.width - 64)
-                spacing: 14
-
-                Text {
-                    Layout.fillWidth: true
-                    text: "編集を始める"
-                    color: root.textPrimary
-                    font.family: "Yu Gothic UI"
-                    font.pixelSize: 28
-                    font.weight: Font.Bold
-                    horizontalAlignment: Text.AlignHCenter
-                }
-                Text {
-                    Layout.fillWidth: true
-                    text: "文字起こしをしなくても、動画を選ぶだけで字幕・カット・音量の編集を始められます"
-                    color: root.textMuted
-                    font.family: "Yu Gothic UI"
-                    font.pixelSize: 11
-                    wrapMode: Text.Wrap
-                    horizontalAlignment: Text.AlignHCenter
-                }
-                Rectangle {
-                    objectName: "startScreenStatusPanel"
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: visible ? 58 : 0
-                    visible: root.appBackend.stage === "ERROR" || root.appBackend.stage === "CHECK"
-                    radius: 8
-                    color: root.appBackend.stage === "ERROR" ? "#321C1C" : "#302A1C"
-                    border.color: root.appBackend.stage === "ERROR" ? root.danger : root.amber
-                    Text {
-                        objectName: "startScreenStatusText"
-                        anchors.fill: parent
-                        anchors.margins: 10
-                        text: root.appBackend.status
-                        color: root.textPrimary
-                        font.family: "Yu Gothic UI"
-                        font.pixelSize: 10
-                        wrapMode: Text.Wrap
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                }
-                Item { Layout.preferredHeight: 4 }
-                Button {
-                    id: newVideoEditButtonControl
-                    objectName: "newVideoEditButton"
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 54
-                    text: "新しい動画を編集"
-                    enabled: !root.appBackend.running
-                    onClicked: root.startNewVideoEdit()
-                    contentItem: Text { text: newVideoEditButtonControl.text; color: "#10140F"; font.family: "Yu Gothic UI"; font.pixelSize: 15; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    background: Rectangle { radius: 10; color: newVideoEditButtonControl.enabled ? root.acid : "#465044" }
-                }
-                Button {
-                    objectName: "startScreenOpenProjectButton"
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 48
-                    text: "プロジェクトを開く"
-                    enabled: !root.appBackend.running
-                    onClicked: root.appBackend.browseProjectFile()
-                }
-                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                Text { text: "必要に応じて"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 10 }
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    Button {
-                        objectName: "startWithTranscriptionButton"
-                        Layout.fillWidth: true
-                        text: "文字起こしから始める"
-                        enabled: !root.appBackend.running
-                        onClicked: root.startTranscriptionFromWelcome()
-                        ToolTip.visible: hovered && root.welcomeTranscriptionBlockReason().length > 0
-                        ToolTip.text: root.welcomeTranscriptionBlockReason()
-                    }
-                    Button {
-                        objectName: "startScreenSourceSetupButton"
-                        Layout.fillWidth: true
-                        text: "素材設定"
-                        enabled: !root.appBackend.running
-                        onClicked: sourcePopup.open()
-                    }
-                    Button {
-                        objectName: "startScreenDictionaryButton"
-                        Layout.fillWidth: true
-                        text: "文字起こし辞書"
-                        enabled: !root.appBackend.running
-                        onClicked: root.openDictionaryScreen()
-                    }
-                    Button {
-                        objectName: "startScreenSettingsButton"
-                        Layout.fillWidth: true
-                        text: "処理設定"
-                        enabled: !root.appBackend.running
-                        onClicked: root.toggleSettingsPopup()
-                    }
-                }
-                Text {
-                    objectName: "startScreenTranscriptionBlockReason"
-                    Layout.fillWidth: true
-                    visible: root.welcomeTranscriptionBlockReason().length > 0
-                    text: root.welcomeTranscriptionBlockReason()
-                    color: root.amber
-                    font.family: "Yu Gothic UI"
-                    font.pixelSize: 10
-                    wrapMode: Text.Wrap
-                    horizontalAlignment: Text.AlignHCenter
-                }
-                Text {
-                    Layout.fillWidth: true
-                    text: root.appBackend.sourceSelection.video ? "選択中: " + root.appBackend.sourceSelection.video : "既存の .subtitle-project.json もそのまま開けます"
-                    color: root.textMuted
-                    font.family: "Yu Gothic UI"
-                    font.pixelSize: 9
-                    elide: Text.ElideMiddle
-                    horizontalAlignment: Text.AlignHCenter
-                }
-            }
+            appBackend: root.appBackend
+            colors: root.subtitleEditorColors
+            transcriptionBlockReason: projectStartFlow.transcriptionBlockReason
+            onNewVideoEditRequested: projectStartFlow.startNewVideoEdit()
+            onOpenProjectRequested: root.browseProjectFile()
+            onStartTranscriptionRequested: projectStartFlow.startTranscription()
+            onSourceSettingsRequested: root.openSourceSettings()
+            onDictionaryRequested: root.openDictionaryScreen()
+            onProcessingSettingsRequested: root.toggleSettingsPopup()
         }
 
         EditorModeRail {
             id: editorModeRail
             objectName: "editorModeRail"
             visible: root.appBackend.projectLoaded
-            Layout.preferredWidth: 86
+            Layout.preferredWidth: 70
             Layout.minimumWidth: 86
             Layout.minimumHeight: 0
             Layout.maximumHeight: mainWorkspace.height
             Layout.fillHeight: true
             Layout.alignment: Qt.AlignTop
-            currentMode: root.appBackend.currentEditMode
-            capabilities: root.appBackend.editorModeCapabilities
+            currentMode: root.appBackend.workspace.currentEditMode
+            capabilities: root.appBackend.workspace.editorModeCapabilities
             panelColor: root.panel
             raisedColor: root.raised
             borderColor: root.border
@@ -1734,70 +1120,26 @@ ApplicationWindow {
         }
 
         ColumnLayout {
+            id: workspaceContent
+            objectName: "workspaceContent"
             visible: root.appBackend.projectLoaded
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 10
 
-            ContextActionBar {
-                id: contextActionBar
-                objectName: "contextActionBar"
-                Layout.fillWidth: true
-                projectLoaded: root.appBackend.projectLoaded
-                running: root.appBackend.running
-                activeJob: root.appBackend.activeJob
-                canCreateProject: Boolean(root.appBackend.sourceSelection.video)
-                canStartTranscription: Boolean(root.workflowCapabilities.canTranscribe)
-                canRenderNormal: Boolean(root.workflowCapabilities.canRenderNormal || root.workflowCapabilities.normalRenderNeedsOutput)
-                renderNeedsOutput: Boolean(root.workflowCapabilities.normalRenderNeedsOutput)
-                renderBlockReason: String(root.workflowCapabilities.normalRenderReason || "")
-                blockReason: root.transcriptionBlockReason()
-                audioMixerAvailable: root.appBackend.audioMixerAvailable
-                mixerBlockReason: root.appBackend.projectLoaded && !root.appBackend.audioMixerAvailable ? "音声トラックがないため音量を調整できません" : ""
-                subtitleAvailable: root.appBackend.segmentCount > 0
-                outputFolderAvailable: Boolean(root.appBackend.videoOutputDirectory)
-                settingsExpanded: root.settingsExpanded
-                onSettingsRequested: root.toggleSettingsPopup()
-                onDictionaryRequested: root.openDictionaryScreen()
-                onCreateProjectRequested: root.appBackend.createEmptyProject()
-                onStartTranscriptionRequested: root.requestTranscription()
-                onEditorRequested: root.openEditorScreen()
-                onMixerRequested: root.openMixerScreen()
-                onShortModeRequested: root.openShortWorkspace()
-                onRenderRequested: root.appBackend.renderVideo(root.currentSettings())
-                onSaveOrStopRequested: {
-                    if (!root.appBackend.running)
-                        root.appBackend.saveSettings(root.currentSettings())
-                    else if (root.appBackend.activeJob !== "update")
-                        root.appBackend.cancelProcessing()
-                }
-                onOutputFolderRequested: root.appBackend.openOutputFolder()
-            }
-            Rectangle {
-                objectName: "mainVideoPanel"
+            RowLayout {
+                id: workspaceUpperArea
+                objectName: "workspaceUpperArea"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.minimumHeight: root.appBackend.progressVisible
-                    ? (root.height <= 800 ? 170 : 300)
-                    : (root.height <= 800 ? (applicationLogPanel.expanded ? 140 : 190) : 300)
-                radius: 12
-                color: "#080A09"
-                border.color: root.border
-                clip: true
-                SequenceEditorPanel {
-                    id: sequenceEditorPanel
-                    objectName: "workspaceSequenceEditor"
-                    visible: root.appBackend.currentWorkspace === "normal-video"
-                        && root.appBackend.projectLoaded
-                        && root.appBackend.currentEditMode === "cut"
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    // Keep the overlay inside the existing video panel at
-                    // compact heights; it must not participate in the outer
-                    // workspace layout or raise modeEditorSlot's bounds.
-                    height: visible ? Math.min(238, Math.max(0, parent.height)) : 0
-                    z: 20
+                Layout.minimumHeight: root.height <= 800 ? 190 : 300
+                spacing: 10
+
+                MediaBinPanel {
+                    objectName: "workspaceMediaBin"
+                    Layout.preferredWidth: root.width >= 1400 ? 280 : 230
+                    Layout.minimumWidth: 210
+                    Layout.fillHeight: true
                     backend: root.appBackend
                     panelColor: root.panel
                     raisedColor: root.raised
@@ -1807,94 +1149,118 @@ ApplicationWindow {
                     accentColor: root.acid
                     warningColor: root.amber
                     dangerColor: root.danger
+                    onSourceSettingsRequested: root.openSourceSettings()
                 }
-                MediaPlayer {
-                    id: mainPlayer
-                    objectName: "mainWorkspacePlayer"
-                    source: root.appBackend.previewUrl
-                    videoOutput: mainVideo
-                    audioOutput: AudioOutput {
-                        objectName: "mainWorkspaceAudioOutput"
-                        volume: 0.7
-                        muted: workspaceAudioBridge.muteSourceAudio
-                    }
-                    onPositionChanged: {
-                        if (!mainSeek.pressed)
-                            mainSeek.value = mainPlayer.position
-                        if (root.enforceCutPreview(mainPlayer.position))
-                            return
-                        var completedPendingSeek = false
-                        if (root.pendingSharedSourcePosition >= 0
-                                && Math.abs(mainPlayer.position - root.pendingSharedSourcePosition) <= 80) {
-                            root.pendingSharedSourcePosition = -1
-                            sharedSeekGuardTimer.stop()
-                            completedPendingSeek = true
-                        }
-                        if (!completedPendingSeek
-                                && mainPlayer.playbackState !== MediaPlayer.PlayingState)
-                            root.syncEditorPlayhead(mainPlayer.position, true)
-                    }
-                    onDurationChanged: mainSeek.to = Math.max(1, mainPlayer.duration)
-                    onPlaybackStateChanged: root.syncEditorPlayhead(mainPlayer.position, true)
-                }
-                Timer {
-                    // Keep the shared playhead current; the overlay handles exact subtitle changes.
-                    interval: 100
-                    repeat: true
-                    running: mainPlayer.playbackState === MediaPlayer.PlayingState
-                    onTriggered: {
-                        if (!root.enforceCutPreview(mainPlayer.position))
-                            root.syncEditorPlayhead(mainPlayer.position, false)
-                    }
-                }
-                VideoOutput { id: mainVideo; anchors.fill: parent; anchors.bottomMargin: 58; fillMode: VideoOutput.PreserveAspectFit }
-                SubtitleOverlay {
-                    id: mainSubtitleOverlay
-                    anchors.fill: mainVideo
-                    appBackend: root.appBackend
-                    player: mainPlayer
-                    layoutMetrics: root.subtitleLayoutMetricsCache
-                    active: mainWorkspace.visible
-                    captionObjectPrefix: "mainSubtitleOverlayCaption"
-                    baseFontSize: root.selectedSubtitleFontSize
-                    defaultSubtitleFontSize: root.defaultSubtitleFontSize
-                    outlineColor: root.selectedSubtitleOutlineColor
-                    outlineThickness: root.selectedSubtitleOutlineThickness
-                    speakerColors: root.projectSpeakerCache
-                    subtitleTextResolver: function(segmentData) { return root.subtitlePreviewText(segmentData) }
-                    onActiveSegmentsChanged: root.syncEditorSelectionFromActiveSegments(
-                        mainSubtitleOverlay.activeSegments
-                    )
-                }
+
                 ColumnLayout {
-                    anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-                    anchors.margins: 12; spacing: 2
-                    Slider { id: mainSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: root.seekSharedPlayer(value, "source") }
-                    RowLayout { Layout.fillWidth: true
-                        ToolButton { objectName: "mainPreviewPlayButton"; text: mainPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: mainPlayer.playbackState === MediaPlayer.PlayingState ? mainPlayer.pause() : mainPlayer.play() }
-                        Text { Layout.fillWidth: true; text: root.appBackend.sourceSelection.video ? root.appBackend.sourceSelection.video.split(/[\\/]/).pop() : "動画未選択"; color: root.textPrimary; font.pixelSize: 11; font.family: "Yu Gothic UI"; elide: Text.ElideMiddle }
-                        Text {
-                            text: root.appBackend.cutTimeline.hasCuts
-                                ? ("素材 " + root.stamp(mainPlayer.position / 1000)
-                                    + "  出力 " + root.stamp(Number(root.appBackend.editorPlayhead.outputPositionMs) / 1000)
-                                    + " / " + root.stamp(root.appBackend.cutOutputDuration))
-                                : root.stamp(mainPlayer.position / 1000) + " / " + root.stamp(mainPlayer.duration / 1000)
-                            color: root.textMuted
-                            font.pixelSize: 10
-                            font.family: "Cascadia Mono"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    spacing: 6
+
+                    ContextActionBar {
+                        id: contextActionBar
+                        compact: true
+                        objectName: "contextActionBar"
+                        Layout.fillWidth: true
+                        projectLoaded: root.appBackend.projectLoaded
+                        running: root.appBackend.running
+                        activeJob: root.appBackend.workflow.activeJob
+                        canCreateProject: Boolean(root.appBackend.sourceSelection.video)
+                        canStartTranscription: Boolean(root.workflowCapabilities.canTranscribe)
+                        canRenderNormal: Boolean(root.workflowCapabilities.canRenderNormal || root.workflowCapabilities.normalRenderNeedsOutput)
+                        renderNeedsOutput: Boolean(root.workflowCapabilities.normalRenderNeedsOutput)
+                        renderBlockReason: String(root.workflowCapabilities.normalRenderReason || "")
+                        blockReason: root.transcriptionBlockReason()
+                        audioMixerAvailable: root.appBackend.audio.audioMixerAvailable
+                        mixerBlockReason: root.appBackend.projectLoaded && !root.appBackend.audio.audioMixerAvailable ? "音声トラックがないため音量を調整できません" : ""
+                        subtitleAvailable: root.appBackend.subtitles.segmentCount > 0
+                        outputFolderAvailable: Boolean(root.appBackend.videoOutputDirectory)
+                        settingsExpanded: root.settingsExpanded
+                        onSettingsRequested: root.toggleSettingsPopup()
+                        onDictionaryRequested: root.openDictionaryScreen()
+                        onCreateProjectRequested: root.appBackend.createEmptyProject()
+                        onStartTranscriptionRequested: root.requestTranscription()
+                        onEditorRequested: root.openEditorScreen()
+                        onMixerRequested: root.openMixerScreen()
+                        onShortModeRequested: root.openShortWorkspace()
+                        onRenderRequested: root.renderVideo()
+                        onSaveOrStopRequested: {
+                            if (!root.appBackend.running)
+                                root.appBackend.saveSettings(root.currentSettings())
+                            else if (root.appBackend.workflow.activeJob !== "update")
+                                root.appBackend.workflow.cancelProcessing()
+                        }
+                        onOutputFolderRequested: root.appBackend.openOutputFolder()
+                    }
+                    WorkspacePreviewPanel {
+                        id: mainPreview
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        appBackend: root.appBackend
+                        player: mainPlayer
+                        colors: root.subtitleEditorColors
+                        layoutMetrics: root.subtitleLayoutMetricsCache
+                        previewActive: mainWorkspace.visible
+                        baseFontSize: root.selectedSubtitleFontSize
+                        defaultSubtitleFontSize: root.defaultSubtitleFontSize
+                        outlineColor: root.selectedSubtitleOutlineColor
+                        outlineThickness: root.selectedSubtitleOutlineThickness
+                        speakerColors: root.projectSpeakerCache
+                        subtitleTextResolver: function(segmentData) {
+                            return subtitleEditorState.subtitlePreviewText(segmentData)
+                        }
+                        formatTimestamp: root.stamp
+                        onSeekRequested: function(positionMs) { root.seekSharedPlayer(positionMs, "source") }
+                        onSelectionSyncRequested: function(segments) {
+                            root.syncEditorSelectionFromActiveSegments(segments)
                         }
                     }
                 }
             }
 
 
+            RowLayout {
+                visible: root.appBackend.workspace.currentEditMode === "cut"
+                Layout.fillWidth: true
+                SmallButton {
+                    objectName: "cutToolButton"
+                    text: root.editTool === "cut" ? "● カット" : "カット"
+                    onClicked: root.editTool = "cut"
+                }
+                SmallButton {
+                    objectName: "sequenceToolButton"
+                    text: root.editTool === "sequence" ? "● 動画結合・並べ替え" : "動画結合・並べ替え"
+                    onClicked: root.editTool = "sequence"
+                }
+                Item { Layout.fillWidth: true }
+            }
+            SequenceEditorPanel {
+                id: sequenceEditorPanel
+                objectName: "workspaceSequenceEditor"
+                visible: root.appBackend.workspace.currentWorkspace === "normal-video"
+                    && root.appBackend.projectLoaded
+                    && root.appBackend.workspace.currentEditMode === "cut" && root.editTool === "sequence"
+                Layout.fillWidth: true
+                Layout.preferredHeight: 335
+                Layout.minimumHeight: 315
+                backend: root.appBackend
+                panelColor: root.panel
+                raisedColor: root.raised
+                borderColor: root.border
+                textColor: root.textPrimary
+                mutedColor: root.textMuted
+                accentColor: root.acid
+                warningColor: root.amber
+                dangerColor: root.danger
+            }
+
             Rectangle {
                 id: modeEditorSlot
                 objectName: "modeEditorSlot"
-                visible: root.appBackend.projectLoaded
+                visible: root.appBackend.projectLoaded && (root.appBackend.workspace.currentEditMode !== "cut" || root.editTool === "cut")
                 Layout.fillWidth: true
                 Layout.preferredHeight: visible
-                    ? (root.appBackend.currentEditMode === "cut" ? 122 : 156)
+                    ? (root.appBackend.workspace.currentEditMode === "cut" ? 122 : 156)
                     : 0
                 Layout.minimumHeight: visible
                     ? 92
@@ -1923,7 +1289,7 @@ ApplicationWindow {
                 implicitHeight: progressPanel.implicitHeight
                 z: 700
                 color: "transparent"
-                visible: root.appBackend && root.appBackend.progressVisible
+                visible: root.appBackend && root.appBackend.workflow.progressVisible
 
                 ProcessingProgressPanel {
                     id: progressPanel
@@ -1943,41 +1309,33 @@ ApplicationWindow {
 
             ApplicationLogPanel {
                 id: applicationLogPanel
+                compact: true
                 objectName: "applicationLogPanel"
                 Layout.fillWidth: true
-                Layout.fillHeight: root.appBackend.progressVisible
+                Layout.fillHeight: root.appBackend.workflow.progressVisible
                 Layout.preferredHeight: implicitHeight
                 // The progress panel reserves 126px in this column.  At the
                 // 1220x760 minimum window, allow an expanded log to shrink
                 // to its collapsed minimum so its header remains reachable.
-                Layout.minimumHeight: root.appBackend.progressVisible ? 118 : implicitHeight
+                Layout.minimumHeight: root.appBackend.workflow.progressVisible ? 56 : implicitHeight
                 backend: root.appBackend
             }
         }
 
 
-        Rectangle {
+        WorkspaceInspectorPanel {
             id: modeSettingsSlot
-            objectName: "modeSettingsSlot"
-            visible: root.appBackend.projectLoaded
-            Layout.preferredWidth: 210
+            projectLoaded: root.appBackend.projectLoaded
+            selectedTab: root.inspectorTab
+            settingsContent: root.modeSettingsContent
+            colors: root.subtitleEditorColors
+            Layout.preferredWidth: root.width >= 1400 ? 300 : 250
             Layout.minimumWidth: 200
             Layout.minimumHeight: 0
             Layout.maximumHeight: mainWorkspace.height
             Layout.fillHeight: true
             Layout.alignment: Qt.AlignTop
-            radius: 12
-            color: root.panel
-            border.color: root.border
-
-            Loader {
-                id: modeSettingsContentLoader
-                objectName: "modeSettingsContentLoader"
-                anchors.fill: parent
-                active: root.appBackend.projectLoaded && root.modeSettingsContent !== null
-                sourceComponent: root.modeSettingsContent
-            }
-
+            onTabRequested: function(tab) { root.selectInspectorTab(tab) }
         }
 
     }
@@ -2005,14 +1363,14 @@ ApplicationWindow {
           if (request) {
               if (root.appBackend.loadProjectWithSelectedSources(
                       request.projectPath, request.sources))
-                  root.appBackend.transcribeProject(request.settings, "replace")
+                  root.appBackend.workflow.transcribeProject(request.settings, "replace")
               return
           }
           var settings = JSON.parse(JSON.stringify(root.currentSettings()))
           if (root.appBackend.projectLoaded)
-              root.appBackend.transcribeProject(settings, "replace")
+              root.appBackend.workflow.transcribeProject(settings, "replace")
           else
-              root.appBackend.startTranscription(settings, true)
+              root.appBackend.workflow.startTranscription(settings, true)
       }
       onRejected: root.pendingWelcomeTranscriptionRequest = null
   }
@@ -2040,195 +1398,19 @@ ApplicationWindow {
               Layout.fillWidth: true
               Item { Layout.fillWidth: true }
               Button { objectName: "transcriptionMergeCancelButton"; text: "キャンセル"; onClicked: transcriptionMergeDialog.close() }
-              Button { objectName: "transcriptionMergeAppendButton"; text: "追加・統合"; onClicked: { transcriptionMergeDialog.close(); root.appBackend.transcribeProject(root.currentSettings(), "merge") } }
-              Button { objectName: "transcriptionMergeReplaceButton"; text: "置き換え"; onClicked: { transcriptionMergeDialog.close(); root.appBackend.transcribeProject(root.currentSettings(), "replace") } }
+              Button { objectName: "transcriptionMergeAppendButton"; text: "追加・統合"; onClicked: { transcriptionMergeDialog.close(); root.appBackend.workflow.transcribeProject(root.currentSettings(), "merge") } }
+              Button { objectName: "transcriptionMergeReplaceButton"; text: "置き換え"; onClicked: { transcriptionMergeDialog.close(); root.appBackend.workflow.transcribeProject(root.currentSettings(), "replace") } }
           }
       }
   }
 
-  Popup {
-        objectName: "sourcePopup"
+    SourceSettingsPopup {
         id: sourcePopup
-        anchors.centerIn: Overlay.overlay
-        width: Math.min(620, Overlay.overlay.width - 32)
-        height: Math.min(680, Overlay.overlay.height - 32)
-        modal: true; focus: true; closePolicy: Popup.CloseOnEscape
-        onOpened: root.appBackend.beginSourceRelink()
-        onClosed: root.appBackend.finishSourceRelink()
-        background: Rectangle { radius: 14; color: root.panel; border.color: root.border }
-        ColumnLayout { anchors.fill: parent; anchors.margins: 18; spacing: 12
-            RowLayout { Layout.fillWidth: true; Text { text: "素材設定"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; Layout.fillWidth: true } ToolButton { text: "×"; onClicked: sourcePopup.close() } }
-            ScrollView {
-                id: sourceSettingsScrollView
-                objectName: "sourceSettingsScrollView"
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                contentHeight: Math.max(
-                    sourceSettingsContent.implicitHeight,
-                    sourceSettingsContent.childrenRect.y + sourceSettingsContent.childrenRect.height
-                )
-                clip: true
-                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                ScrollBar.vertical: ScrollBar {
-                    objectName: "sourceSettingsVerticalScrollBar"
-                    policy: ScrollBar.AsNeeded
-                }
-                ColumnLayout {
-                    id: sourceSettingsContent
-                    objectName: "sourceSettingsContent"
-                    width: sourceSettingsScrollView.availableWidth
-                    spacing: 12
-            Rectangle {
-                objectName: "sourceDependencyWarning"
-                Layout.fillWidth: true
-                Layout.preferredHeight: visible ? 62 : 0
-                visible: !root.appBackend.dependencyStatus.ready
-                radius: 8
-                color: "#30201C"
-                border.color: root.danger
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.margins: 9
-                    Text {
-                        Layout.fillWidth: true
-                        text: "不足ツール: " + root.appBackend.dependencyStatus.missing.join(", ")
-                        color: root.textPrimary
-                        font.family: "Yu Gothic UI"
-                        font.pixelSize: 10
-                        wrapMode: Text.Wrap
-                    }
-                    SmallButton { text: "再確認"; enabled: !root.appBackend.running; onClicked: root.appBackend.refreshDependencies() }
-                }
-            }
-            Rectangle {
-                objectName: "sourcePopupDropTarget"
-                Layout.fillWidth: true
-                Layout.preferredHeight: 68
-                radius: 9
-                color: sourcePopupDropArea.containsDrag ? "#263326" : root.raised
-                border.color: sourcePopupDropArea.containsDrag ? root.acid : root.border
-                border.width: sourcePopupDropArea.containsDrag ? 2 : 1
-                Column {
-                    anchors.centerIn: parent
-                    spacing: 3
-                    Text { anchors.horizontalCenter: parent.horizontalCenter; text: "動画・話者音声をここにドロップ"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.DemiBold }
-                    Text { anchors.horizontalCenter: parent.horizontalCenter; text: "動画1件と複数の音声を自動判別します"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
-                }
-                DropArea {
-                    id: sourcePopupDropArea
-                    anchors.fill: parent
-                    enabled: !root.appBackend.running
-                    onEntered: function(drag) { drag.accepted = drag.hasUrls }
-                    onDropped: function(drop) { root.importSourceDrop(drop) }
-                }
-            }
-            PanelTitle { text: "動画" }
-            RowLayout { Layout.fillWidth: true; Text { objectName: "sourceVideoPathText"; Layout.fillWidth: true; text: root.appBackend.sourceSelection.video || "未選択"; color: root.textMuted; elide: Text.ElideMiddle } SmallButton { text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseVideoFile() } }
-            PanelTitle { text: "話者音声" }
-            ListView {
-                id: sourceAudioList
-                Layout.fillWidth: true
-                Layout.preferredHeight: Math.max(48, Math.min(124, contentHeight))
-                clip: true; spacing: 5; model: root.appBackend.speakers
-                delegate: Rectangle { id: sourceAudioDelegate; required property int index; required property var modelData; width: sourceAudioList.width; height: 38; radius: 7; color: root.raised
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.margins: 7
-                        Button {
-                            objectName: "sourceSpeakerColorButton"
-                            Layout.preferredWidth: 24
-                            Layout.preferredHeight: 24
-                            enabled: !root.appBackend.running
-                            onClicked: root.openSpeakerColorPicker("source", sourceAudioDelegate.index, sourceAudioDelegate.modelData.color)
-                            contentItem: Rectangle { radius: 4; color: sourceAudioDelegate.modelData.color; border.color: root.textPrimary }
-                            background: Rectangle { radius: 5; color: "transparent"; border.color: root.border }
-                            ToolTip.visible: hovered
-                            ToolTip.text: "字幕色を変更"
-                        }
-                        Text { Layout.fillWidth: true; text: sourceAudioDelegate.modelData.file_name; color: root.textPrimary; elide: Text.ElideMiddle }
-                        ToolButton { text: "×"; enabled: !root.appBackend.running; onClicked: root.appBackend.removeAudioFile(sourceAudioDelegate.index) }
-                    }
-                }
-            }
-            RowLayout { Layout.fillWidth: true; SmallButton { text: "音声を追加"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseAudioFiles() } SmallButton { text: "クリア"; enabled: !root.appBackend.running; onClicked: root.appBackend.clearAudioFiles() } Item { Layout.fillWidth: true } }
-            PanelTitle { text: "文字起こし対象と音声同期" }
-            RowLayout {
-                Layout.fillWidth: true
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    Text { text: "動画音声トラック"; color: root.textMuted; font.pixelSize: 9 }
-                    ComboBox {
-                        id: trackCombo
-                        objectName: "videoAudioTrackCombo"
-                        Layout.fillWidth: true
-                        model: root.appBackend.audioTracks
-                        textRole: "label"
-                        valueRole: "selector"
-                    }
-                }
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    Text { text: "同期の基準音声"; color: root.textMuted; font.pixelSize: 9 }
-                    ComboBox {
-                        id: referenceCombo
-                        objectName: "referenceAudioCombo"
-                        Layout.fillWidth: true
-                        model: root.appBackend.speakers
-                        textRole: "file_name"
-                        valueRole: "path"
-                    }
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                Text { text: "手動補正（秒）"; color: root.textMuted; font.pixelSize: 9 }
-                TimeField {
-                    id: manualOffsetField
-                    objectName: "manualAlignmentOffsetField"
-                    Layout.fillWidth: true
-                    text: "0.000"
-                    validator: DoubleValidator { bottom: -120; top: 120; decimals: 3 }
-                }
-                SmallButton {
-                    objectName: "analyzeAlignmentButton"
-                    text: root.appBackend.alignmentBusy ? "調整中" : "音声のずれを自動調整"
-                    enabled: !root.appBackend.running && !root.appBackend.alignmentBusy && root.appBackend.speakers.length > 0 && root.appBackend.sourceSelection.video
-                    onClicked: root.appBackend.analyzeAlignment(referenceCombo.currentValue || "", trackCombo.currentValue || "", Number(manualOffsetField.text || 0))
-                }
-            }
-            Text {
-                Layout.fillWidth: true
-                text: root.alignmentStatusLabel(root.appBackend.alignmentResult.status)
-                    + (root.appBackend.alignmentResult.offset !== undefined
-                        ? "  " + Number(root.appBackend.alignmentResult.offset).toFixed(3) + "秒"
-                        : "")
-                color: root.textMuted
-                font.pixelSize: 9
-                font.family: "Yu Gothic UI"
-            }
-            PanelTitle { text: "プロジェクト保存先" }
-            RowLayout {
-                Layout.fillWidth: true
-                Text { objectName: "projectSavePathText"; Layout.fillWidth: true; text: root.appBackend.projectSavePath || "動画の選択後に決まります"; color: root.textMuted; elide: Text.ElideMiddle }
-                SmallButton { objectName: "projectSaveAsButton"; text: root.appBackend.projectLoaded ? "別名保存" : "保存先を選んで作成"; enabled: !root.appBackend.running && Boolean(root.appBackend.projectSavePath); onClicked: root.appBackend.browseProjectSaveAs() }
-            }
-            PanelTitle { text: "完成動画の出力先" }
-            RowLayout {
-                Layout.fillWidth: true
-                Text { objectName: "videoOutputDirectoryText"; Layout.fillWidth: true; text: root.appBackend.videoOutputDirectory || "書き出すときに選択できます"; color: root.textMuted; elide: Text.ElideMiddle }
-                SmallButton { objectName: "videoOutputDirectoryButton"; text: "選択"; enabled: !root.appBackend.running; onClicked: root.appBackend.browseOutputDirectory() }
-            }
-            Item { Layout.fillWidth: true; Layout.preferredHeight: 8 }
-                }
-            }
-            RowLayout {
-                objectName: "sourcePopupFooter"
-                Layout.fillWidth: true
-                Item { Layout.fillWidth: true }
-                Button { objectName: "sourceRelinkButton"; text: "素材を再指定"; enabled: root.appBackend.projectLoaded && !root.appBackend.running; onClicked: root.appBackend.relinkProjectSources() }
-                Button { objectName: "sourceDoneButton"; text: "完了"; onClicked: sourcePopup.close() }
-            }
-        }
+        appBackend: root.appBackend
+        colors: root.subtitleEditorColors
+        onSourceDropped: function(drop) { root.importSourceDrop(drop) }
+        onSpeakerColorRequested: function(index, color) { root.openSpeakerColorPicker("source", index, color) }
+        onSaveAsRequested: root.browseProjectSaveAs()
     }
 
     Rectangle {
@@ -2253,544 +1435,20 @@ ApplicationWindow {
 
         Component {
             id: mixerContentComponent
-            Item {
-                id: mixerContent
-                objectName: "mixerContent"
-                readonly property bool previewReady: !root.appBackend.audioPreviewPreparing
-                    && root.appBackend.audioMixerPreviewChannels.length > 0
-                property real initialPosition: -1
-                property int initialPositionStableTicks: 0
-                property real channelScrollPosition: 0
-                property bool restoringChannelScroll: false
-                Component.onCompleted: {
-                    initialPosition = root.editorPositionCache
-                    restoreInitialPosition()
-                }
-
-                function restoreInitialPosition(confirmStable) {
-                    if (!mixerPlayer.seekable || mixerPlayer.duration <= 0 || initialPosition < 0)
-                        return
-                    var target = Math.max(
-                        0,
-                        Math.min(mixerPlayer.duration, initialPosition)
-                    )
-                    if (Math.abs(mixerPlayer.position - target) <= 80) {
-                        if (confirmStable) {
-                            initialPositionStableTicks += 1
-                            if (initialPositionStableTicks >= 6)
-                                initialPosition = -1
-                        }
-                        return
-                    }
-                    initialPositionStableTicks = 0
-                    mixerPlayer.position = target
-                }
-
-                function syncPreviewPlayer(player, forcePosition) {
-                    if (!player)
-                        return
-                    var target = mixerPlayer.position - Number(player.previewOffsetMilliseconds || 0)
-                    if (target < 0) {
-                        player.scheduleSync(0, true, false)
-                        return
-                    }
-                    if (player.duration > 0 && target >= player.duration) {
-                        player.scheduleSync(player.duration, true, false)
-                        return
-                    }
-                    player.scheduleSync(
-                        target,
-                        forcePosition,
-                        mixerPlayer.playbackState === MediaPlayer.PlayingState
-                    )
-                }
-
-                function syncPreviewPlayers(forcePosition) {
-                    for (var index = 0; index < mixerPreviewPlayers.count; ++index)
-                        mixerContent.syncPreviewPlayer(mixerPreviewPlayers.objectAt(index), forcePosition)
-                }
-
-                function togglePlayback() {
-                    if (mixerPlayer.playbackState === MediaPlayer.PlayingState) {
-                        mixerPlayer.pause()
-                        root.appBackend.pauseAudioMixerPreview()
-                        mixerContent.syncPreviewPlayers(false)
-                    } else {
-                        root.appBackend.startAudioMixerPreview(mixerPlayer.position)
-                        mixerPlayer.play()
-                        mixerContent.syncPreviewPlayers(true)
-                    }
-                }
-
-                function seekTo(milliseconds) {
-                    mixerPlayer.position = Math.max(
-                        0,
-                        Math.min(mixerPlayer.duration, milliseconds)
-                    )
-                    root.appBackend.seekAudioMixerPreview(
-                        mixerPlayer.position,
-                        mixerPlayer.playbackState === MediaPlayer.PlayingState
-                    )
-                    mixerContent.syncPreviewPlayers(true)
-                }
-
-                function seekBy(milliseconds) {
-                    mixerContent.seekTo(mixerPlayer.position + milliseconds)
-                }
-
-                function restoreChannelScroll() {
-                    var maximum = Math.max(0, mixerChannelList.contentWidth - mixerChannelList.width)
-                    restoringChannelScroll = true
-                    mixerChannelList.contentX = Math.max(0, Math.min(maximum, channelScrollPosition))
-                    restoringChannelScroll = false
-                }
-
-                function updateMixerChannel(index, changes) {
-                    channelScrollPosition = mixerChannelList.contentX
-                    mixerChannelScrollRestoreTimer.restart()
-                    root.appBackend.updateAudioMixChannel(index, changes)
-                }
-
-                MediaPlayer {
-                    id: mixerPlayer
-                    objectName: "mixerPlayer"
-                    source: mixerContent.previewReady ? root.appBackend.audioPreviewClockUrl : ""
-                    audioOutput: AudioOutput { muted: true }
-                    Component.onCompleted: mixerContent.restoreInitialPosition()
-                    onSeekableChanged: mixerContent.restoreInitialPosition()
-                    onDurationChanged: mixerContent.restoreInitialPosition()
-                    onMediaStatusChanged: mixerContent.restoreInitialPosition()
-                    onPositionChanged: {
-                        root.editorPositionCache = mixerPlayer.position
-                        if (mixerPlayer.playbackState !== MediaPlayer.PlayingState)
-                            mixerContent.syncPreviewPlayers(true)
-                    }
-                    onPlaybackStateChanged: {
-                        mixerContent.syncPreviewPlayers(false)
-                        if (mixerPlayer.playbackState === MediaPlayer.StoppedState)
-                            root.appBackend.pauseAudioMixerPreview()
-                    }
-                }
-
-                Instantiator {
-                    id: mixerPreviewPlayers
-                    objectName: "mixerPreviewPlayers"
-                    model: root.appBackend.audioMixerPreviewChannels
-                    delegate: MediaPlayer {
-                        id: mixerPreviewPlayer
-                        required property int index
-                        required property var modelData
-                        property string previewChannelId: String(modelData.id || "")
-                        objectName: "mixerPreviewPlayer-" + String(modelData.preview_object_id || previewChannelId)
-                        property real previewOffsetMilliseconds: Number(modelData.preview_offset_seconds || 0) * 1000
-                        property int requestedAudioTrack: Number(modelData.preview_audio_track_index || 0)
-                        property real pendingSyncPosition: 0
-                        property bool pendingForcePosition: false
-                        property bool pendingPlayback: false
-                        property bool hasPendingSync: false
-
-                        function scheduleSync(target, forcePosition, shouldPlay) {
-                            pendingSyncPosition = Math.max(0, Number(target || 0))
-                            pendingForcePosition = pendingForcePosition || Boolean(forcePosition)
-                            pendingPlayback = Boolean(shouldPlay)
-                            hasPendingSync = true
-                            applyPendingSync()
-                        }
-
-                        function applyPendingSync() {
-                            if (!hasPendingSync || audioTracks.length <= requestedAudioTrack)
-                                return
-                            if (activeAudioTrack !== requestedAudioTrack)
-                                activeAudioTrack = requestedAudioTrack
-                            var target = duration > 0
-                                ? Math.min(duration, pendingSyncPosition)
-                                : pendingSyncPosition
-                            if (target > 0 && !seekable)
-                                return
-                            if (pendingForcePosition || Math.abs(position - target) > 180)
-                                position = target
-                            var shouldPlay = pendingPlayback && (duration <= 0 || target < duration)
-                            hasPendingSync = false
-                            pendingForcePosition = false
-                            if (shouldPlay)
-                                play()
-                            else
-                                pause()
-                        }
-
-                        source: modelData.preview_url || ""
-                        audioOutput: AudioOutput {
-                            objectName: "mixerPreviewAudioOutput"
-                            muted: true
-                        }
-                        // qmllint disable missing-type
-                        audioBufferOutput: modelData.preview_buffer_output
-                        // qmllint enable missing-type
-                        onTracksChanged: applyPendingSync()
-                        onSeekableChanged: applyPendingSync()
-                        onMediaStatusChanged: applyPendingSync()
-                    }
-                    onObjectAdded: function(index, object) {
-                        mixerContent.syncPreviewPlayer(object, true)
-                    }
-                }
-
-                Timer {
-                    interval: 50
-                    running: mixerContent.previewReady && mixerContent.initialPosition >= 0
-                    repeat: true
-                    onTriggered: mixerContent.restoreInitialPosition(true)
-                }
-
-                Timer {
-                    interval: 150
-                    running: mixerPlayer.playbackState === MediaPlayer.PlayingState
-                    repeat: true
-                    onTriggered: mixerContent.syncPreviewPlayers(false)
-                }
-
-                Timer {
-                    id: mixerChannelScrollRestoreTimer
-                    interval: 0
-                    repeat: false
-                    onTriggered: mixerContent.restoreChannelScroll()
-                }
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    spacing: 0
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 64
-                        Layout.leftMargin: 18
-                        Layout.rightMargin: 14 + root.codexDrawerHeaderInset
-                        spacing: 10
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 1
-                            Text { text: "音量ミキサー"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 19; font.weight: Font.Bold; font.letterSpacing: 1.0 }
-                            Text { text: "動画内トラックと個別音声を、完成動画用にミックス"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
-                        }
-                        Text { text: root.appBackend.projectDirty ? "● 保存待ち" : "✓ 保存済み"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
-                        Text {
-                            objectName: "mixerAudioPreviewCacheSummary"
-                            text: root.appBackend.audioPreviewPreparing ? "プレビューを準備中" : "プレビュー準備済み"
-                            color: root.textMuted
-                            font.family: "Cascadia Mono"
-                            font.pixelSize: 9
-                        }
-                        SmallButton {
-                            objectName: "mixerClearAudioPreviewCacheButton"
-                            text: "プレビューを作り直す"
-                            enabled: !root.appBackend.running
-                            onClicked: {
-                                root.appBackend.clearAudioPreviewCache()
-                                root.appBackend.prepareAudioMixerPreview()
-                            }
-                        }
-                        SmallButton { objectName: "mixerResetButton"; text: "すべての音声トラックをリセット"; enabled: !root.appBackend.running; onClicked: root.appBackend.resetAudioMixer() }
-                        SmallButton { objectName: "mixerSaveButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveProject() }
-                        SmallButton { objectName: "mixerToEditorButton"; text: "字幕編集へ"; enabled: !root.appBackend.running; onClicked: root.openEditorScreen() }
-                        Button {
-                            id: mixerRenderButton
-                            objectName: "mixerRenderButton"
-                            implicitHeight: 34
-                            text: root.appBackend.activeJob === "render" ? "書き出し中..." : "動画を書き出す"
-                            enabled: Boolean(root.workflowCapabilities.canRenderNormal || root.workflowCapabilities.normalRenderNeedsOutput)
-                            onClicked: {
-                                root.appBackend.renderVideo(root.currentSettings())
-                            }
-                            contentItem: Text { text: mixerRenderButton.text; color: mixerRenderButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 10; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                            background: Rectangle { radius: 7; color: mixerRenderButton.enabled ? root.acid : "#252C28" }
-                        }
-                        SmallButton { objectName: "mixerBackButton"; text: "メインへ戻る"; onClicked: root.closeMixerScreen() }
-                    }
-                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: Math.min(230, Math.max(174, 174 + (mixerContent.height - 760) * 0.31))
-                        Layout.leftMargin: 14
-                        Layout.rightMargin: 14
-                        Layout.topMargin: 10
-                        radius: 10
-                        color: root.panel
-                        border.color: root.border
-
-                        ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: 10
-                            spacing: 7
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Button {
-                                    id: mixerPlayButton
-                                    objectName: "mixerPlayButton"
-                                    Layout.preferredWidth: 46
-                                    Layout.preferredHeight: 34
-                                    enabled: mixerContent.previewReady
-                                    onClicked: mixerContent.togglePlayback()
-                                    contentItem: Text {
-                                        text: mixerPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"
-                                        color: mixerPlayButton.enabled ? "#10140F" : root.textMuted
-                                        font.pixelSize: 14
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
-                                    }
-                                    background: Rectangle { radius: 7; color: mixerPlayButton.enabled ? root.acid : "#252C28" }
-                                }
-                                SmallButton { objectName: "mixerRewindButton"; text: "−5秒"; enabled: mixerContent.previewReady; onClicked: mixerContent.seekBy(-5000) }
-                                Slider {
-                                    id: mixerSeek
-                                    objectName: "mixerSeek"
-                                    Layout.fillWidth: true
-                                    from: 0
-                                    to: Math.max(1, mixerPlayer.duration)
-                                    value: mixerPlayer.position
-                                    enabled: mixerContent.previewReady
-                                    onMoved: mixerContent.seekTo(value)
-                                }
-                                SmallButton { objectName: "mixerForwardButton"; text: "+5秒"; enabled: mixerContent.previewReady; onClicked: mixerContent.seekBy(5000) }
-                                Text {
-                                    objectName: "mixerTimeText"
-                                    Layout.preferredWidth: 142
-                                    text: root.stamp(mixerPlayer.position / 1000) + " / " + root.stamp(mixerPlayer.duration / 1000)
-                                    color: root.textPrimary
-                                    font.family: "Cascadia Mono"
-                                    font.pixelSize: 10
-                                    horizontalAlignment: Text.AlignRight
-                                }
-                            }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                PanelTitle { text: "プレビュー" }
-                                Text { text: root.appBackend.audioPreviewPreparing ? "プレビュー音声を準備中…" : "出力音ライブプレビュー"; color: root.appBackend.audioPreviewPreparing ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
-                                Item { Layout.fillWidth: true }
-                                Text { text: "クリックで再生位置を移動"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
-                            }
-                            SubtitleTimeline {
-                                objectName: "mixerSequence"
-                                Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                player: mixerPlayer
-                                pixelsPerSecond: root.timelinePixelsPerSecond
-                                laneHeight: 42
-                                editable: false
-                                showSegments: false
-                                showTrackVolume: true
-                                lanes: root.appBackend.audioMixerSequenceChannels
-                                waveforms: root.appBackend.audioMixerSequenceChannels
-                            }
-                        }
-                    }
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        Layout.margins: 14
-                        radius: 12
-                        color: "#090C0B"
-                        border.color: root.border
-
-                        ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: 14
-                            spacing: 10
-                            RowLayout {
-                                Layout.fillWidth: true
-                                PanelTitle { text: "音声トラック" }
-                                Text { text: root.appBackend.audioMixerChannels.length + "トラック"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 10 }
-                                Item { Layout.fillWidth: true }
-                                Text { text: "音量: −60〜+6 dB / ミュート / ソロ"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
-                            }
-                            ListView {
-                                id: mixerChannelList
-                                objectName: "mixerChannelList"
-                                Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                orientation: ListView.Horizontal
-                                spacing: 12
-                                clip: true
-                                boundsBehavior: Flickable.StopAtBounds
-                                model: root.appBackend.audioMixerChannels
-                                onContentXChanged: {
-                                    if (!mixerContent.restoringChannelScroll && !mixerChannelScrollRestoreTimer.running)
-                                        mixerContent.channelScrollPosition = contentX
-                                }
-                                delegate: Rectangle {
-                                    id: mixerStrip
-                                    required property int index
-                                    required property var modelData
-                                    objectName: "mixerChannelStrip-" + index
-                                    property real previewLevel: Number(root.appBackend.audioPreviewLevels[modelData.id] || 0)
-                                    width: 170
-                                    height: mixerChannelList.height - 12
-                                    radius: 9
-                                    color: modelData.enabled ? "#171E1A" : "#101512"
-                                    border.width: modelData.solo ? 2 : 1
-                                    border.color: modelData.solo ? root.acid : (modelData.muted ? root.amber : root.border)
-                                    opacity: modelData.enabled ? 1.0 : 0.58
-
-                                    ColumnLayout {
-                                        anchors.fill: parent
-                                        anchors.margins: 10
-                                        spacing: 7
-                                        RowLayout {
-                                            Layout.fillWidth: true
-                                            Text { text: "トラック " + String(mixerStrip.index + 1).padStart(2, "0"); color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 10; font.weight: Font.Bold }
-                                            Item { Layout.fillWidth: true }
-                                            Rectangle {
-                                                Layout.preferredWidth: 62; Layout.preferredHeight: 20; radius: 4
-                                                color: mixerStrip.modelData.kind === "external" ? "#253225" : "#272C30"
-                                                Text { anchors.centerIn: parent; text: mixerStrip.modelData.kind === "external" ? "外部音声" : "動画音声"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8; font.weight: Font.Bold }
-                                            }
-                                        }
-                                        Text { Layout.fillWidth: true; text: mixerStrip.modelData.label; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 11; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideMiddle }
-                                        Text { Layout.fillWidth: true; text: mixerStrip.modelData.kind === "external" ? "外部音声を使用" : "動画音声を使用"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
-                                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-
-                                        Item {
-                                            Layout.fillWidth: true
-                                            Layout.fillHeight: true
-                                            Layout.minimumHeight: 250
-                                            RowLayout {
-                                                anchors.fill: parent
-                                                anchors.leftMargin: 13
-                                                anchors.rightMargin: 13
-                                                spacing: 8
-                                                Column {
-                                                    Layout.preferredWidth: 30
-                                                    Layout.fillHeight: true
-                                                    topPadding: 7
-                                                    Text { width: parent.width; text: "+6"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
-                                                    Item { width: 1; height: (parent.height - 62) * 0.15 }
-                                                    Text { width: parent.width; text: "0"; color: root.textPrimary; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
-                                                    Item { width: 1; height: (parent.height - 62) * 0.12 }
-                                                    Text { width: parent.width; text: "−6"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
-                                                    Item { width: 1; height: (parent.height - 62) * 0.12 }
-                                                    Text { width: parent.width; text: "−12"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
-                                                    Item { width: 1; height: (parent.height - 62) * 0.18 }
-                                                    Text { width: parent.width; text: "−24"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
-                                                    Item { width: 1; height: (parent.height - 62) * 0.22 }
-                                                    Text { width: parent.width; text: "−∞"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 8; horizontalAlignment: Text.AlignRight }
-                                                }
-                                                Slider {
-                                                    id: channelFader
-                                                    objectName: "mixerChannelFader"
-                                                    Layout.fillHeight: true
-                                                    Layout.preferredWidth: 54
-                                                    orientation: Qt.Vertical
-                                                    from: -60
-                                                    to: 6.0206
-                                                    stepSize: 0.5
-                                                    value: root.volumePercentToDb(mixerStrip.modelData.volume_percent)
-                                                    enabled: !root.appBackend.running && mixerStrip.modelData.enabled
-                                                    onMoved: mixerContent.updateMixerChannel(mixerStrip.index, {"volume_percent": root.dbToVolumePercent(value)})
-                                                    onPressedChanged: if (!pressed) mixerContent.updateMixerChannel(mixerStrip.index, {"volume_percent": root.dbToVolumePercent(value)})
-                                                    background: Rectangle {
-                                                        x: channelFader.leftPadding + channelFader.availableWidth / 2 - width / 2
-                                                        y: channelFader.topPadding
-                                                        width: 7
-                                                        height: channelFader.availableHeight
-                                                        radius: 3
-                                                        color: "#090C0B"
-                                                        border.color: root.border
-                                                        Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: parent.height * channelFader.position; radius: 3; color: mixerStrip.modelData.muted ? root.amber : root.acid; opacity: 0.72 }
-                                                    }
-                                                    handle: Rectangle {
-                                                        x: channelFader.leftPadding + channelFader.availableWidth / 2 - width / 2
-                                                        y: channelFader.topPadding + (1 - channelFader.position) * (channelFader.availableHeight - height)
-                                                        implicitWidth: 44
-                                                        implicitHeight: 18
-                                                        radius: 4
-                                                        color: channelFader.pressed ? root.acid : root.textPrimary
-                                                        border.color: "#0B0E0D"
-                                                        border.width: 2
-                                                        Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: parent.width - 8; height: 2; color: "#222A26" }
-                                                    }
-                                                }
-                                                Rectangle {
-                                                    Layout.preferredWidth: 13
-                                                    Layout.fillHeight: true
-                                                    Layout.topMargin: 7
-                                                    Layout.bottomMargin: 7
-                                                    radius: 4
-                                                    color: "#070908"
-                                                    border.color: root.border
-                                                    Rectangle {
-                                                        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 2
-                                                        height: Math.max(2, (parent.height - 4) * mixerStrip.previewLevel)
-                                                        radius: 2
-                                                        Behavior on height { NumberAnimation { duration: 70 } }
-                                                        gradient: Gradient {
-                                                            GradientStop { position: 0.0; color: root.acid }
-                                                            GradientStop { position: 0.72; color: root.amber }
-                                                            GradientStop { position: 1.0; color: root.danger }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: channelFader.value <= -59.9 ? "−∞ dB" : (channelFader.value >= 0 ? "+" : "") + channelFader.value.toFixed(1) + " dB"
-                                            color: root.textPrimary; font.family: "Cascadia Mono"; font.pixelSize: 13; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter
-                                        }
-                                        Text { Layout.fillWidth: true; text: Math.round(Number(mixerStrip.modelData.volume_percent)) + "%"; color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 9; horizontalAlignment: Text.AlignHCenter }
-                                        RowLayout {
-                                            Layout.fillWidth: true
-                                            spacing: 6
-                                            Button {
-                                                id: channelMuteButton
-                                                objectName: "mixerMuteButton"
-                                                Layout.fillWidth: true; Layout.preferredHeight: 34
-                                                text: "M"
-                                                enabled: !root.appBackend.running
-                                                onClicked: mixerContent.updateMixerChannel(mixerStrip.index, {"muted": !mixerStrip.modelData.muted})
-                                                contentItem: Text { text: channelMuteButton.text; color: mixerStrip.modelData.muted ? "#10140F" : root.textPrimary; font.family: "Bahnschrift"; font.pixelSize: 13; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                                background: Rectangle { radius: 6; color: mixerStrip.modelData.muted ? root.amber : root.raised; border.color: mixerStrip.modelData.muted ? root.amber : root.border }
-                                                ToolTip.visible: hovered
-                                                ToolTip.text: "ミュート"
-                                            }
-                                            Button {
-                                                id: channelSoloButton
-                                                objectName: "mixerSoloButton"
-                                                Layout.fillWidth: true; Layout.preferredHeight: 34
-                                                text: "S"
-                                                enabled: !root.appBackend.running
-                                                onClicked: mixerContent.updateMixerChannel(mixerStrip.index, {"solo": !mixerStrip.modelData.solo})
-                                                contentItem: Text { text: channelSoloButton.text; color: mixerStrip.modelData.solo ? "#10140F" : root.textPrimary; font.family: "Bahnschrift"; font.pixelSize: 13; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                                background: Rectangle { radius: 6; color: mixerStrip.modelData.solo ? root.acid : root.raised; border.color: mixerStrip.modelData.solo ? root.acid : root.border }
-                                                ToolTip.visible: hovered
-                                                ToolTip.text: "ソロ"
-                                            }
-                                        }
-                                        CheckBox {
-                                            objectName: "mixerChannelEnabledCheck"
-                                            Layout.alignment: Qt.AlignHCenter
-                                            text: "使用する"
-                                            checked: Boolean(mixerStrip.modelData.enabled)
-                                            enabled: !root.appBackend.running
-                                            onToggled: mixerContent.updateMixerChannel(mixerStrip.index, {"enabled": checked})
-                                        }
-                                    }
-                                }
-                                ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
-                            }
-                            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Text { Layout.fillWidth: true; text: "使用するトラック、ミュート、ソロ、音量をプレビューへ反映します。"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; wrapMode: Text.WordWrap }
-                                Text { text: "全体の音量"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 9; font.weight: Font.Bold }
-                                Rectangle { objectName: "mixerMasterMeter"; Layout.preferredWidth: 120; Layout.preferredHeight: 9; radius: 4; color: "#070908"; border.color: root.border; Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.margins: 2; width: Math.max(0, (parent.width - 4) * Number(root.appBackend.audioMasterLevel || 0)); radius: 2; color: root.appBackend.audioLimiterReductionDb > 0.01 ? root.amber : root.acid; Behavior on width { NumberAnimation { duration: 45 } } } }
-                                Text { objectName: "mixerLimiterReduction"; text: "自動調整 " + Number(root.appBackend.audioLimiterReductionDb || 0).toFixed(1) + " dB"; color: root.appBackend.audioLimiterReductionDb > 0.01 ? root.amber : root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 9; Layout.preferredWidth: 100 }
-                                Text { text: "音声出力: AAC / 48 kHz"; color: root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
-                            }
-                        }
-                    }
-                }
+            AudioMixerScreen {
+                appBackend: root.appBackend
+                colors: root.subtitleEditorColors
+                formatTimestamp: root.stamp
+                speakers: root.projectSpeakerCache
+                timelinePixelsPerSecond: root.timelinePixelsPerSecond
+                entryPosition: root.editorPositionCache
+                headerRightInset: root.codexDrawerHeaderInset
+                canRender: Boolean(root.workflowCapabilities.canRenderNormal || root.workflowCapabilities.normalRenderNeedsOutput)
+                onPositionUpdated: function(positionMs) { root.editorPositionCache = positionMs }
+                onSubtitleEditorRequested: root.openEditorScreen()
+                onSaveRequested: root.saveProject()
+                onRenderRequested: root.renderVideo()
+                onCloseRequested: root.closeMixerScreen()
             }
         }
     }
@@ -2817,311 +1475,31 @@ ApplicationWindow {
 
         Component {
             id: editorContentComponent
-            Item {
-                id: editorContent
-                property bool selectionSyncReady: false
-
-                Component.onCompleted: {
-                    // Reuse the decoded source and move its output to the editor preview.
-                    var requestedPosition = root.editorPositionCache
-                    mainPlayer.pause()
-                    mainPlayer.videoOutput = editorVideo
-                    mainPlayer.position = requestedPosition
-                    editorSeek.to = Math.max(1, mainPlayer.duration)
-                    editorSeek.value = mainPlayer.position
-                    editorContent.selectionSyncReady = true
-                    root.syncEditorPlayhead(requestedPosition, true)
-                }
-                Component.onDestruction: {
-                    root.editorPositionCache = mainPlayer.position
-                    mainPlayer.pause()
-                    mainPlayer.videoOutput = mainVideo
-                }
-                Connections {
-                    target: mainPlayer
-                    function onPositionChanged() {
-                        root.editorPositionCache = mainPlayer.position
-                        if (!editorSeek.pressed)
-                            editorSeek.value = mainPlayer.position
-                    }
-                    function onDurationChanged() {
-                        editorSeek.to = Math.max(1, mainPlayer.duration)
-                    }
-                }
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    spacing: 0
-            RowLayout {
-                Layout.fillWidth: true; Layout.preferredHeight: 58; Layout.leftMargin: 14; Layout.rightMargin: 10 + root.codexDrawerHeaderInset; spacing: 8
-                Text { text: "字幕編集"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 17; font.weight: Font.Bold; font.letterSpacing: 1.0 }
-                Text { text: root.appBackend.projectDirty ? "● 編集あり" : "✓ 保存済み"; color: root.appBackend.projectDirty ? root.amber : root.acid; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
-                Text { objectName: "editorStatusText"; Layout.fillWidth: true; Layout.minimumWidth: 80; text: root.userFacingStatusLabel(root.appBackend.stage, root.appBackend.status); color: root.appBackend.stage === "ERROR" ? root.danger : ((root.appBackend.stage === "CHECK" || root.appBackend.stage === "BUSY") ? root.amber : root.textMuted); font.family: "Yu Gothic UI"; font.pixelSize: 9; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight }
-                SmallButton { objectName: "undoCaptionButton"; text: "元に戻す"; enabled: !root.appBackend.running && root.appBackend.canUndo; onClicked: root.appBackend.undoSubtitleEdit() }
-                SmallButton { objectName: "redoCaptionButton"; text: "やり直す"; enabled: !root.appBackend.running && root.appBackend.canRedo; onClicked: root.appBackend.redoSubtitleEdit() }
-                SmallButton { objectName: "addCaptionButton"; text: "+ 字幕追加"; enabled: !root.appBackend.running; onClicked: root.appBackend.addSegment(mainPlayer.position / 1000) }
-                SmallButton { objectName: "splitCaptionButton"; text: "分割"; enabled: !root.appBackend.running && root.canSplitSelectedSegment(mainPlayer.position); onClicked: root.appBackend.splitSelectedSegment(mainPlayer.position / 1000) }
-                SmallButton { objectName: "deleteCaptionButton"; text: "削除"; enabled: !root.appBackend.running && root.appBackend.selectedSegmentIndex >= 0; onClicked: root.appBackend.deleteSelectedSegment() }
-                SmallButton { objectName: "saveProjectButton"; text: "保存"; enabled: !root.appBackend.running; onClicked: root.appBackend.saveProject() }
-                SmallButton { objectName: "buildAssButton"; text: "プレビューを更新"; enabled: !root.appBackend.running; onClicked: root.appBackend.buildSubtitlePreview(root.currentSettings()) }
-                Button {
-                    id: editorRenderButton
-                    objectName: "editorRenderButton"
-                    implicitHeight: 34
-                    text: root.appBackend.activeJob === "render" ? "焼き付け中..." : "字幕を焼き付ける"
-                    enabled: root.appBackend.projectLoaded && !root.appBackend.running
-                    onClicked: root.renderFromEditor()
-                    contentItem: Text { text: editorRenderButton.text; color: editorRenderButton.enabled ? "#10140F" : "#68716B"; font.family: "Yu Gothic UI"; font.pixelSize: 10; font.weight: Font.Bold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    background: Rectangle { radius: 7; color: editorRenderButton.enabled ? root.acid : "#252C28" }
-                }
-                SmallButton { objectName: "editorBackButton"; text: "メインへ戻る"; enabled: !root.appBackend.running; onClicked: root.closeEditorScreen() }
-            }
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.border }
-
-            RowLayout {
-                Layout.fillWidth: true; Layout.fillHeight: true; Layout.margins: 10; spacing: 10
-                ColumnLayout {
-                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredWidth: 760; spacing: 8
-                    Rectangle {
-                        Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 220; radius: 10; color: "#060806"; border.color: root.border; clip: true
-                        VideoOutput { id: editorVideo; anchors.fill: parent; anchors.bottomMargin: 54; fillMode: VideoOutput.PreserveAspectFit }
-                        SubtitleOverlay {
-                            id: editorOverlay
-                            objectName: "editorSubtitleOverlay"
-                            anchors.fill: editorVideo
-                            appBackend: root.appBackend
-                            player: mainPlayer
-                            layoutMetrics: root.subtitleLayoutMetricsCache
-                            active: root.editorMode
-                            captionObjectPrefix: "editorSubtitleOverlayCaption"
-                            baseFontSize: root.selectedSubtitleFontSize
-                            defaultSubtitleFontSize: root.defaultSubtitleFontSize
-                            outlineColor: root.selectedSubtitleOutlineColor
-                            outlineThickness: root.selectedSubtitleOutlineThickness
-                            speakerColors: root.projectSpeakerCache
-                            subtitleTextResolver: function(segmentData) { return root.subtitlePreviewText(segmentData) }
-                            onActiveSegmentsChanged: {
-                                if (editorContent.selectionSyncReady)
-                                    root.syncEditorSelectionFromActiveSegments(editorOverlay.activeSegments)
-                            }
-                        }
-                        ColumnLayout { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 8; spacing: 1
-                            Slider { id: editorSeek; Layout.fillWidth: true; from: 0; to: 1; onMoved: mainPlayer.position = value }
-                            RowLayout { Layout.fillWidth: true
-                                ToolButton { text: mainPlayer.playbackState === MediaPlayer.PlayingState ? "Ⅱ" : "▶"; onClicked: mainPlayer.playbackState === MediaPlayer.PlayingState ? mainPlayer.pause() : mainPlayer.play() }
-                                Text { Layout.fillWidth: true; text: root.stamp(mainPlayer.position / 1000); color: root.textPrimary; font.family: "Cascadia Mono"; font.pixelSize: 11 }
-                                Text { text: editorOverlay.activeSegments.length + "件表示中"; color: root.textMuted; font.pixelSize: 10 }
-                            }
-                        }
-                    }
-                    RowLayout { Layout.fillWidth: true
-                        PanelTitle { text: "タイムライン" }
-                        Item { Layout.fillWidth: true }
-                        Text { text: "スナップ"; color: root.textMuted; font.pixelSize: 9 }
-                        SpinBox { id: snapSpin; from: 0; to: 1000; stepSize: 10; value: root.snapMilliseconds; editable: true; onValueModified: root.snapMilliseconds = value }
-                        Text { text: "ms"; color: root.textMuted; font.pixelSize: 9 }
-                        Text { text: "表示倍率"; color: root.textMuted; font.pixelSize: 9 }
-                        Slider { Layout.preferredWidth: 140; from: 16; to: 180; value: root.editorPixelsPerSecond; onMoved: root.editorPixelsPerSecond = value }
-                    }
-                    SubtitleTimeline {
-                        objectName: "editorTimeline"
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: Math.min(320, 90 + Math.max(1, root.projectSpeakerCache.length) * 42)
-                        player: mainPlayer
-                        pixelsPerSecond: root.editorPixelsPerSecond
-                        snapSeconds: root.snapMilliseconds / 1000
-                        editable: !root.appBackend.running
-                        Component.onCompleted: Qt.callLater(function() { viewportX = root.editorTimelineScrollX })
-                        onViewportXChanged: root.editorTimelineScrollX = viewportX
-                        onSegmentActivated: function(index) {
-                            var segment = root.appBackend.segmentAt(index)
-                            if (segment) mainPlayer.position = Number(segment.start) * 1000
-                        }
-                    }
-                }
-
-                Rectangle {
-                    Layout.preferredWidth: 620; Layout.fillHeight: true; radius: 10; color: root.panel; border.color: root.border
-                    ColumnLayout { anchors.fill: parent; anchors.margins: 8; spacing: 7
-                        RowLayout { Layout.fillWidth: true
-                            PanelTitle { text: "話者ごとの字幕色" }
-                            Item { Layout.fillWidth: true }
-                            Text { text: "色を押して変更"; color: root.textMuted; font.pixelSize: 8 }
-                        }
-                        ListView {
-                            id: projectSpeakerColorList
-                            objectName: "projectSpeakerColorList"
-                            Layout.fillWidth: true; Layout.preferredHeight: 36
-                            orientation: ListView.Horizontal; spacing: 6; clip: true
-                            model: root.projectSpeakerCache
-                            delegate: Button {
-                                id: projectSpeakerColorButton
-                                required property int index
-                                required property var modelData
-                                width: 128; height: 34
-                                enabled: !root.appBackend.running
-                                onClicked: root.openSpeakerColorPicker("project", index, modelData.color)
-                                contentItem: Row {
-                                    spacing: 6
-                                    Rectangle { width: 20; height: 20; radius: 5; color: projectSpeakerColorButton.modelData.color; border.color: root.textPrimary }
-                                    Text { width: 94; text: projectSpeakerColorButton.modelData.name; color: root.textPrimary; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter }
-                                }
-                                background: Rectangle { radius: 7; color: projectSpeakerColorButton.hovered ? "#27312C" : root.raised; border.color: projectSpeakerColorButton.hovered ? root.acid : root.border }
-                                ToolTip.visible: hovered
-                                ToolTip.text: modelData.name + " の字幕色を変更"
-                            }
-                            ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
-                        }
-                        RowLayout { Layout.fillWidth: true
-                            PanelTitle { text: "字幕一覧" }
-                            Item { Layout.fillWidth: true }
-                            Text { text: "開始 / 終了 / 話者 / フォント / サイズ"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 8 }
-                        }
-                        ListView {
-                            id: captionTable
-                            objectName: "captionTable"
-                            Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 5
-                            function revealSelectedCaption() {
-                                var selectedIndex = root.appBackend.selectedSegmentIndex
-                                if (selectedIndex >= 0)
-                                    positionViewAtIndex(selectedIndex, ListView.Contain)
-                            }
-                            model: root.appBackend.subtitleModel
-                            currentIndex: root.appBackend.selectedSegmentIndex
-                            Component.onCompleted: Qt.callLater(function() { contentY = root.editorCaptionScrollY })
-                            onContentYChanged: root.editorCaptionScrollY = contentY
-                            onCurrentIndexChanged: if (currentIndex >= 0) root.appBackend.selectSegment(currentIndex)
-                            delegate: Rectangle {
-                                id: captionRow
-                                enabled: !root.appBackend.running
-                                required property int index
-                                objectName: "captionRow-" + index
-                                required property string segmentId
-                                required property real start
-                                required property real end
-                                required property string text
-                                required property string editorText
-                                required property string speaker
-                                required property int layoutRow
-                                required property real subtitleFontScale
-                                required property string subtitleFontFamily
-                                width: captionTable.width; height: 122; radius: 8
-                                color: root.appBackend.selectedSegmentIndex === index ? "#263326" : root.raised
-                                border.color: root.appBackend.selectedSegmentIndex === index ? root.acid : root.border
-                                MouseArea { anchors.fill: parent; z: -1; onClicked: { root.appBackend.selectSegment(captionRow.index); mainPlayer.position = captionRow.start * 1000 } }
-                                ColumnLayout { anchors.fill: parent; anchors.margins: 7; spacing: 5
-                                    RowLayout { Layout.fillWidth: true; spacing: 5
-                                        Text { text: String(captionRow.index + 1).padStart(4, "0"); color: root.textMuted; font.family: "Cascadia Mono"; font.pixelSize: 9 }
-                                        TimeField { Layout.preferredWidth: 72; text: captionRow.start.toFixed(3); onEditingFinished: root.appBackend.updateSegment(captionRow.index, {"start": Number(text)}) }
-                                        TimeField { Layout.preferredWidth: 72; text: captionRow.end.toFixed(3); onEditingFinished: root.appBackend.updateSegment(captionRow.index, {"end": Number(text)}) }
-                                        ComboBox {
-                                            Layout.preferredWidth: 105
-                                            model: root.projectSpeakerCache
-                                            textRole: "name"
-                                            valueRole: "style"
-                                            Component.onCompleted: {
-                                                for (var i = 0; i < count; ++i) if (valueAt(i) === captionRow.speaker) currentIndex = i
-                                            }
-                                            onActivated: root.appBackend.updateSegment(captionRow.index, {"speaker": currentValue})
-                                        }
-                                        ComboBox {
-                                            id: captionFontCombo
-                                            objectName: "captionFontCombo"
-                                            Layout.preferredWidth: 130
-                                            model: root.appBackend.fontChoices
-                                            textRole: "label"
-                                            valueRole: "family"
-                                            function syncCurrentFont() {
-                                                for (var i = 0; i < count; ++i) {
-                                                    if (valueAt(i) === captionRow.subtitleFontFamily) {
-                                                        currentIndex = i
-                                                        return
-                                                    }
-                                                }
-                                                currentIndex = 0
-                                            }
-                                            Component.onCompleted: syncCurrentFont()
-                                            Connections {
-                                                target: captionRow
-                                                function onSubtitleFontFamilyChanged() { captionFontCombo.syncCurrentFont() }
-                                            }
-                                            onActivated: root.appBackend.updateSegment(captionRow.index, {"subtitle_font_family": currentValue})
-                                        }
-                                        CompactSpinBox {
-                                            objectName: "captionSizeSpin"
-                                            Layout.preferredWidth: 106; from: 50; to: 200; stepSize: 5
-                                            value: Math.round(captionRow.subtitleFontScale * 100)
-                                            onValueModified: root.appBackend.updateSegment(captionRow.index, {"subtitle_font_scale": value / 100})
-                                        }
-                                        Text { text: "%"; color: root.textMuted; font.pixelSize: 9 }
-                                    }
-                                    TextArea {
-                                        id: captionTextArea
-                                        objectName: "captionTextArea"
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight: 52
-                                        text: captionRow.editorText
-                                        color: root.textPrimary; selectionColor: root.acid; font.family: captionRow.subtitleFontFamily || "Yu Gothic UI"; font.pixelSize: 12
-                                        wrapMode: TextEdit.Wrap
-                                        selectByMouse: true
-                                        onTextChanged: {
-                                            if (activeFocus)
-                                                root.updateSubtitleDraft(captionRow.index, text)
-                                        }
-                                        onActiveFocusChanged: {
-                                            if (activeFocus) {
-                                                root.beginSubtitleDraft(captionRow.index, text)
-                                            } else {
-                                                var editedText = text
-                                                if (editedText !== captionRow.editorText)
-                                                    root.appBackend.updateSegment(captionRow.index, {"text": editedText})
-                                                root.clearSubtitleDraft(captionRow.index)
-                                            }
-                                        }
-                                        background: Rectangle { radius: 6; color: "#101512"; border.color: parent.activeFocus ? root.acid : root.border }
-                                    }
-                                }
-                            }
-                            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn }
-                        }
-                    }
-                }
-            }
-                }
-
-                Rectangle {
-                    objectName: "editorEmptyState"
-                    anchors.centerIn: parent
-                    width: 360
-                    height: 112
-                    visible: root.appBackend.segmentCount === 0
-                    z: 10
-                    radius: 10
-                    color: "#17201B"
-                    border.color: root.border
-                    Column {
-                        anchors.centerIn: parent
-                        spacing: 8
-                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: "字幕がありません"; color: root.textPrimary; font.family: "Yu Gothic UI"; font.pixelSize: 16; font.weight: Font.Bold }
-                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: "上部の「+ 字幕追加」から手動で追加できます"; color: root.textMuted; font.family: "Yu Gothic UI"; font.pixelSize: 11 }
-                    }
-                }
-
-                Connections {
-                    target: root.appBackend
-                    function onSegmentsChanged() {
-                        Qt.callLater(function() {
-                            if (captionTable && typeof captionTable.revealSelectedCaption === "function")
-                                captionTable.revealSelectedCaption()
-                        })
-                    }
-                    function onSelectionChanged() {
-                        Qt.callLater(function() {
-                            if (captionTable && typeof captionTable.revealSelectedCaption === "function")
-                                captionTable.revealSelectedCaption()
-                        })
-                    }
-                }
+            SubtitleEditorScreen {
+                onEditRequested: function(action, atSeconds) { root.performSubtitleEdit(action, atSeconds) }
+                onSaveRequested: root.saveProject()
+                appBackend: root.appBackend
+                player: mainPlayer
+                editorState: subtitleEditorState
+                colors: root.subtitleEditorColors
+                formatTimestamp: root.stamp
+                projectSpeakerCache: root.projectSpeakerCache
+                subtitleLayoutMetricsCache: root.subtitleLayoutMetricsCache
+                selectedSubtitleFontSize: root.selectedSubtitleFontSize
+                defaultSubtitleFontSize: root.defaultSubtitleFontSize
+                selectedSubtitleOutlineColor: root.selectedSubtitleOutlineColor
+                selectedSubtitleOutlineThickness: root.selectedSubtitleOutlineThickness
+                statusText: root.userFacingStatusLabel(root.appBackend.stage, root.appBackend.status)
+                active: root.editorMode
+                codexDrawerHeaderInset: root.codexDrawerHeaderInset
+                onPreviewAttached: function(output) { mainPlayer.videoOutput = output }
+                onPreviewDetached: mainPlayer.videoOutput = mainPreview.videoOutputItem
+                onPlayheadSyncRequested: function(positionMs) { root.syncEditorPlayhead(positionMs, true) }
+                onSelectionSyncRequested: function(segments) { root.syncEditorSelectionFromActiveSegments(segments) }
+                onSpeakerColorRequested: function(index, color) { root.openSpeakerColorPicker("project", index, color) }
+                onPreviewRequested: root.buildSubtitlePreview()
+                onRenderRequested: root.renderFromEditor()
+                onCloseRequested: root.closeEditorScreen()
             }
         }
     }
@@ -3154,11 +1532,11 @@ ApplicationWindow {
     }
 
     Connections {
-        target: root.appBackend
+        target: root.appBackend.workspace
         function onWorkspaceChanged() {
-            var nextWorkspace = String(root.appBackend.currentWorkspace || "normal-video")
+            var nextWorkspace = String(root.appBackend.workspace.currentWorkspace || "normal-video")
             if (nextWorkspace === "normal-video") {
-                var playerState = root.appBackend.workspacePlayerState
+                var playerState = root.appBackend.workspace.workspacePlayerState
                 if (playerState)
                     mainPlayer.position = Number(playerState.positionMs || 0)
             }
@@ -3168,15 +1546,24 @@ ApplicationWindow {
     CodexSidebarContainer {
         id: codexSidebar
         objectName: "commonCodexSidebar"
+        parent: root.loginInInspector ? modeSettingsSlot : root.contentItem
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        anchors.margins: 10
-        width: root.codexSidebarWidth
-        visible: root.codexAuthenticated && root.codexDrawerOpen
+        anchors.margins: root.loginInInspector ? 0 : 10
+        anchors.topMargin: root.loginInInspector ? modeSettingsSlot.tabBarHeight : 10
+        width: root.loginInInspector ? parent.width : root.codexSidebarWidth
+        visible: root.codexAuthenticated
+            && (root.loginInInspector ? root.inspectorTab === "codex" : root.codexDrawerOpen)
         z: 600
         backend: root.appBackend
-        drawerMode: root.codexSidebarOverlay
+        drawerMode: !root.loginInInspector && root.codexSidebarOverlay
+        panelColor: root.panel
+        raisedColor: root.raised
+        borderColor: root.border
+        textColor: root.textPrimary
+        mutedColor: root.textMuted
+        accentColor: root.acid
         onCloseRequested: root.codexDrawerOpen = false
     }
 
@@ -3187,7 +1574,8 @@ ApplicationWindow {
         anchors.margins: 12
         width: 86
         height: 34
-        visible: root.codexAuthenticated && root.codexSidebarOverlay && !root.codexDrawerOpen
+        visible: !root.loginInInspector && root.codexAuthenticated
+            && root.codexSidebarOverlay && !root.codexDrawerOpen
         z: 650
         text: root.codexDrawerOpen ? "Codexを閉じる" : "Codexを開く"
         onClicked: root.codexDrawerOpen = !root.codexDrawerOpen
@@ -3195,34 +1583,37 @@ ApplicationWindow {
 
     ComboBox {
         id: aiProviderLoginCombo
+        parent: root.loginInInspector ? modeSettingsSlot : root.contentItem
         objectName: "aiProviderLoginCombo"
         anchors.top: parent.top
+        anchors.topMargin: root.loginInInspector ? modeSettingsSlot.tabBarHeight + 12 : 12
         anchors.left: parent.left
         anchors.margins: 12
         width: 108
         height: 34
         visible: !root.codexAuthenticated && root.appBackend
-            && root.appBackend.aiChatProviders.length > 1
-        model: root.appBackend ? root.appBackend.aiChatProviders : []
+            && (!root.loginInInspector || root.inspectorTab === "codex")
+            && root.appBackend.ai.aiChatProviders.length > 1
+        model: root.appBackend ? root.appBackend.ai.aiChatProviders : []
         textRole: "label"
         valueRole: "id"
-        enabled: root.appBackend && root.appBackend.codexChatState !== "streaming"
-            && root.appBackend.codexChatState !== "sending"
-            && root.appBackend.codexChatState !== "stopping"
+        enabled: root.appBackend && root.appBackend.ai.codexChatState !== "streaming"
+            && root.appBackend.ai.codexChatState !== "sending"
+            && root.appBackend.ai.codexChatState !== "stopping"
         Component.onCompleted: {
             for (var index = 0; index < count; ++index) {
-                if (valueAt(index) === root.appBackend.aiChatProviderId) {
+                if (valueAt(index) === root.appBackend.ai.aiChatProviderId) {
                     currentIndex = index
                     break
                 }
             }
         }
-        onActivated: root.appBackend.selectAIProvider(currentValue)
+        onActivated: root.appBackend.ai.selectAIProvider(currentValue)
         Connections {
-            target: root.appBackend
+            target: root.appBackend.ai
             function onAiChatChanged() {
                 for (var index = 0; index < aiProviderLoginCombo.count; ++index) {
-                    if (aiProviderLoginCombo.valueAt(index) === root.appBackend.aiChatProviderId) {
+                    if (aiProviderLoginCombo.valueAt(index) === root.appBackend.ai.aiChatProviderId) {
                         aiProviderLoginCombo.currentIndex = index
                         break
                     }
@@ -3233,17 +1624,20 @@ ApplicationWindow {
 
     Text {
         id: aiProviderAuthHint
+        parent: root.loginInInspector ? modeSettingsSlot : root.contentItem
         objectName: "aiProviderAuthHint"
         anchors.top: parent.top
-        anchors.left: aiProviderLoginCombo.visible ? aiProviderLoginCombo.right : parent.left
-        anchors.leftMargin: 12
+        anchors.topMargin: root.loginInInspector ? modeSettingsSlot.tabBarHeight + 12 : 12
+        anchors.left: parent.left
+        anchors.leftMargin: aiProviderLoginCombo.visible ? 132 : 12
         width: 240
         height: 34
         visible: !root.codexAuthenticated && root.appBackend
-            && root.appBackend.aiChatAuthHint
-            && !root.appBackend.aiChatLoginAvailable
+            && (!root.loginInInspector || root.inspectorTab === "codex")
+            && root.appBackend.ai.aiChatAuthHint
+            && !root.appBackend.ai.aiChatLoginAvailable
         z: 650
-        text: root.appBackend ? root.appBackend.aiChatAuthHint : ""
+        text: root.appBackend ? root.appBackend.ai.aiChatAuthHint : ""
         textFormat: Text.PlainText
         color: root.textMuted
         font.family: "Yu Gothic UI"
@@ -3254,33 +1648,37 @@ ApplicationWindow {
 
     SmallButton {
         id: codexLoginRoute
+        anchors.leftMargin: aiProviderLoginCombo.visible ? 132 : 12
+        parent: root.loginInInspector ? modeSettingsSlot : root.contentItem
         objectName: "codexLoginRoute"
         anchors.top: parent.top
-        anchors.left: aiProviderLoginCombo.visible ? aiProviderLoginCombo.right : parent.left
+        anchors.topMargin: root.loginInInspector ? modeSettingsSlot.tabBarHeight + 12 : 12
+        anchors.left: parent.left
         anchors.margins: 12
         width: text === "ブラウザを開く" ? 116 : 92
         height: 34
         visible: !root.codexAuthenticated
-            && (!root.appBackend || root.appBackend.aiChatLoginAvailable)
+            && (!root.loginInInspector || root.inspectorTab === "codex")
+            && (!root.appBackend || root.appBackend.ai.aiChatLoginAvailable)
         z: 650
-        text: root.appBackend && root.appBackend.aiChatAuthHint
-            ? root.appBackend.aiChatAuthHint
-            : (root.appBackend && root.appBackend.codexAuthState === "login_pending"
+        text: root.appBackend && root.appBackend.ai.aiChatAuthHint
+            ? root.appBackend.ai.aiChatAuthHint
+            : (root.appBackend && root.appBackend.ai.codexAuthState === "login_pending"
             ? "ブラウザを開く"
-            : (root.appBackend && ["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0
+            : (root.appBackend && ["error", "disconnected"].indexOf(root.appBackend.ai.codexConnectionState) >= 0
                 ? "再接続" : root.aiProviderLoginLabel))
         enabled: root.appBackend
-            && root.appBackend.codexConnectionState !== "connecting"
-            && root.appBackend.codexAuthState !== "checking"
-            && root.appBackend.codexAuthState !== "logging_in"
-            && root.appBackend.aiChatLoginAvailable
+            && root.appBackend.ai.codexConnectionState !== "connecting"
+            && root.appBackend.ai.codexAuthState !== "checking"
+            && root.appBackend.ai.codexAuthState !== "logging_in"
+            && root.appBackend.ai.aiChatLoginAvailable
         onClicked: {
-            if (root.appBackend.codexAuthState === "login_pending")
-                root.appBackend.openAIProviderLoginPage()
-            else if (["error", "disconnected"].indexOf(root.appBackend.codexConnectionState) >= 0)
-                root.appBackend.reconnectAIChat()
+            if (root.appBackend.ai.codexAuthState === "login_pending")
+                root.appBackend.ai.openAIProviderLoginPage()
+            else if (["error", "disconnected"].indexOf(root.appBackend.ai.codexConnectionState) >= 0)
+                root.appBackend.ai.reconnectAIChat()
             else
-                root.appBackend.startAIProviderLogin()
+                root.appBackend.ai.startAIProviderLogin()
         }
     }
 
@@ -3296,7 +1694,7 @@ ApplicationWindow {
         z: 700
         color: "transparent"
         visible: root.appBackend
-            && root.appBackend.progressVisible
+            && root.appBackend.workflow.progressVisible
             && (root.editorMode || root.mixerMode || root.dictionaryMode || root.shortWorkspaceActive)
         height: modeProgressPanel.implicitHeight
 
@@ -3346,10 +1744,10 @@ ApplicationWindow {
         onDropped: function(drop) { root.importSourceDrop(drop) }
     }
 
-    Shortcut { sequences: [StandardKey.Undo]; enabled: !root.appBackend.running && root.editorMode; onActivated: root.appBackend.undoSubtitleEdit() }
-    Shortcut { sequences: [StandardKey.Redo]; enabled: !root.appBackend.running && root.editorMode; onActivated: root.appBackend.redoSubtitleEdit() }
-    Shortcut { sequences: [StandardKey.Save]; enabled: !root.appBackend.running && (root.editorMode || root.mixerMode); onActivated: root.appBackend.saveProject() }
-    Shortcut { sequence: "Delete"; enabled: !root.appBackend.running && root.editorMode && root.appBackend.selectedSegmentIndex >= 0; onActivated: root.appBackend.deleteSelectedSegment() }
+    Shortcut { sequences: [StandardKey.Undo]; enabled: root.editorMode; onActivated: root.performSubtitleEdit("undo") }
+    Shortcut { sequences: [StandardKey.Redo]; enabled: root.editorMode; onActivated: root.performSubtitleEdit("redo") }
+    Shortcut { sequences: [StandardKey.Save]; enabled: (root.editorMode || root.mixerMode) && !root.appBackend.running; onActivated: root.saveProjectFromShortcut() }
+    Shortcut { sequence: "Delete"; enabled: root.editorMode && root.appBackend.subtitles.selectedSegmentIndex >= 0; onActivated: root.performSubtitleEdit("delete") }
 
     Connections {
         target: root.appBackend
@@ -3361,12 +1759,22 @@ ApplicationWindow {
         root.syncSettings()
     }
     onClosing: function(close) {
-        if (root.appBackend.running && root.appBackend.activeJob === "update") {
+        if (root.appBackend.running) {
+            if (root.appBackend.workflow.activeJob === "update"
+                    || root.appBackend.projectDirty
+                    || root.dictionaryMode
+                    || subtitleEditorState.hasPendingSubtitleText
+                    || subtitleEditorState.hasPendingTimeEdit) {
+                close.accepted = false
+                return
+            }
+            mainPlayer.stop()
+            return
+        }
+        if (root.appBackend.projectLoaded && !root.saveProject()) {
             close.accepted = false
             return
         }
-        root.appBackend.saveProject()
         mainPlayer.stop()
     }
 }
-

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Callable, cast
+from tests.typed_case import TypedTestCase
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
@@ -11,7 +15,7 @@ os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
 from PySide6.QtCore import QMetaObject, QObject, Signal
 from PySide6.QtGui import QGuiApplication
-from shiboken6 import delete
+import shiboken6
 
 from tests.gui_test_harness import (
     AllowedQmlMessage,
@@ -28,6 +32,7 @@ from tests.gui_performance_scenarios import (
     _short_workspace_active,
     _short_visual_update_contract_passed,
 )
+from tests.qt_property_value import qt_property_value
 
 
 FIXTURE_QML = """\
@@ -88,19 +93,23 @@ class FakeVideoSink(QObject):
     videoFrameChanged = Signal(object)
 
 
-class GuiTestHarnessTests(unittest.TestCase):
+class GuiTestHarnessTests(TypedTestCase):
+    _owns_application: bool
+    application: QGuiApplication
+
     @classmethod
     def setUpClass(cls) -> None:
         application = QGuiApplication.instance()
         cls._owns_application = application is None
-        cls.application = application or QGuiApplication([])
+        cls.application = application if isinstance(application, QGuiApplication) else QGuiApplication([])
 
     @classmethod
     def tearDownClass(cls) -> None:
         if cls._owns_application:
             cls.application.quit()
+            delete = cast(Callable[[QObject], None], getattr(shiboken6, "delete"))
             delete(cls.application)
-            cls.application = None
+            del cls.application
 
     def setUp(self) -> None:
         self.workspace = tempfile.TemporaryDirectory()
@@ -122,14 +131,14 @@ class GuiTestHarnessTests(unittest.TestCase):
     def test_load_find_click_resize_bounds_and_cleanup(self) -> None:
         _engine, window = self.harness.load_qml(self.qml_path)
         self.harness.wait_until(
-            lambda: bool(window.property("ready")),
+            lambda: bool(qt_property_value(window, "ready")),
             description="fixture completion",
         )
         target = self.harness.find_item(window, "targetButton")
 
         self.harness.click(window, target)
         self.harness.wait_until(
-            lambda: int(window.property("clickCount")) == 1,
+            lambda: qt_property_value(window, "clickCount") == 1,
             description="fixture click",
         )
         self.harness.resize(window, 480, 300)
@@ -151,7 +160,7 @@ class GuiTestHarnessTests(unittest.TestCase):
             [target],
         )
         self.harness.emit_signal(window, "submitted", 2)
-        self.assertEqual(window.property("clickCount"), 3)
+        self.assertEqual(qt_property_value(window, "clickCount"), 3)
 
         self.harness.cleanup()
         self.harness.cleanup()
@@ -276,18 +285,19 @@ class GuiTestHarnessTests(unittest.TestCase):
         self.assertIsNotNone(snapshot["first_video_frame_ms"])
 
     def test_main_playback_contract_requires_decoded_frames(self) -> None:
-        result = {
+        media: dict[str, object] = {
+            "play_starts": 1,
+            "video_frames": 0,
+            "first_video_frame_ms": None,
+        }
+        result: dict[str, object] = {
             "advanced_playback_ms": 30_000,
             "requested_playback_ms": 30_000,
-            "media": {
-                "play_starts": 1,
-                "video_frames": 0,
-                "first_video_frame_ms": None,
-            },
+            "media": media,
         }
 
         self.assertFalse(_main_preview_contract_passed(result))
-        result["media"].update({"video_frames": 450, "first_video_frame_ms": 125.0})
+        media.update({"video_frames": 450, "first_video_frame_ms": 125.0})
         self.assertTrue(_main_preview_contract_passed(result))
 
     def test_playback_follow_contract_rejects_seek_only_selection(self) -> None:
@@ -327,6 +337,93 @@ class GuiTestHarnessTests(unittest.TestCase):
         self.assertFalse(_short_visual_update_contract_passed(result))
         result["position_after_ms"] = 625
         self.assertTrue(_short_visual_update_contract_passed(result))
+
+class GuiPerformanceInstrumentationTests(TypedTestCase):
+    def test_qml_facades_count_operations_materialization_and_cache_misses(self) -> None:
+        # QApplicationを既存ハーネスと共有しない別プロセスで実際のQML境界を通す。
+        script = r'''
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
+
+from PySide6.QtCore import QMetaObject, QUrl
+from PySide6.QtQml import QQmlApplicationEngine
+
+from src.subtitle_project import create_project
+from tests.gui_performance_scenarios import InstrumentedEditBayBackend
+
+with TemporaryDirectory() as directory:
+    root = Path(directory)
+    with patch("src.gui.CodexChatController.connect"):
+        backend = InstrumentedEditBayBackend([], workspace_root=root)
+    try:
+        backend._project = create_project(
+            video_path=root / "video.mp4", output_dir=root,
+            duration_seconds=5,
+            segments=[{"id": "a", "start": 0, "end": 2, "text": "before", "speaker": "Default", "words": []}],
+        )
+        backend._sync_subtitle_model()
+        backend.shortVideo.initializeShortVideoClips()
+        engine = QQmlApplicationEngine()
+        engine.rootContext().setContextProperty("backend", backend)
+        engine.loadData(b"""
+import QtQml
+QtObject {
+    property int arrayRows: 0
+    function edit() {
+        backend.subtitles.selectSegment(0)
+        backend.subtitles.updateSegment(0, {text: "after"})
+        backend.shortVideo.updateShortVideoClip(0, {fit: "contain"})
+        backend.workspace.selectEditMode("subtitle")
+    }
+    function readArrays() {
+        arrayRows = backend.subtitles.subtitleSegments.length
+            + backend.shortVideo.shortVideoClips.length
+    }
+    function preview() { backend.subtitles.activeSubtitleSegments(1) }
+}
+""", QUrl("instrumentation.qml"))
+        assert engine.rootObjects(), "計測用QMLの読み込みに失敗"
+        view = engine.rootObjects()[0]
+        backend.reset_gui_diagnostics()
+        assert QMetaObject.invokeMethod(view, "edit")
+        for name in ("selectSegment", "updateSegment", "updateShortVideoClip", "selectEditMode"):
+            assert backend.gui_boundary_calls[name] == 1, (name, backend.gui_boundary_calls)
+        assert backend.qml_select_segment_arguments == [0]
+        assert backend._project["segments"][0]["text"] == "after"
+        # 互換API経由の呼び出しも、実装側で一度だけ数える。
+        backend.selectSegment(0)
+        assert backend.gui_boundary_calls["selectSegment"] == 2
+        backend.reset_gui_diagnostics()
+        assert QMetaObject.invokeMethod(view, "readArrays")
+        assert view.property("arrayRows") == 2
+        assert backend.gui_diagnostics["full_segment_materializations"] == 1, backend.gui_diagnostics
+        assert backend.gui_diagnostics["full_clip_materializations"] == 1
+        assert backend.gui_diagnostics["short_clip_materializations"] == 1
+        backend.subtitles._subtitle_preview_text_cache.clear()
+        backend.reset_gui_diagnostics()
+        assert QMetaObject.invokeMethod(view, "preview")
+        assert QMetaObject.invokeMethod(view, "preview")
+        assert backend.gui_boundary_calls["activeSubtitleSegments"] == 2
+        assert backend.gui_diagnostics["segment_views"] == 2
+        assert backend.gui_diagnostics["preview_format_requests"] == 2
+        assert backend.gui_diagnostics["preview_format_cache_misses"] == 1
+        print("機能別窓口の計測を確認")
+    finally:
+        backend._ai_chat.shutdown()
+        backend._shutdown_executor()
+'''
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

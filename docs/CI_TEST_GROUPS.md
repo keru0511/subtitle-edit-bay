@@ -36,6 +36,24 @@ media semantic E2EをLinuxの `ffmpeg-runtime` で所有しつつ、字幕描画
 selectorは `tests.test_module.TestCaseClass.test_method` 形式の標準unittest名にします。
 モジュール直下の `test_*` 関数は標準discoveryで収集されないため許可しません。
 
+## Windows GUI回帰テストの選定
+
+`tests/test_gui_editor.py` はLinuxの `qt-gui` で全件実行します。Windowsでは
+`.github/workflows/ci.yml` の `Run Windows GUI regression tests` に列挙したケースを実行します。
+Windowsでの確認が必須のケースには、テストメソッドのdocstringへ正確に
+`Windows GUI CI必須` と書き、同じテストの完全名をWindowsの実行リストへ追加してください。
+
+```python
+def test_example(self) -> None:
+    """Windows GUI CI必須: Windows上の編集操作を確認する。"""
+    # テスト本体
+```
+
+`python scripts/run_ci_tests.py --validate` はQtを読み込まずにdocstringとワークフローを
+静的検査し、必須ケースの登録漏れ、存在しないテスト名、重複したテスト名を検出します。
+この検査はCIのPython品質チェックでも実行されます。印のないケースはLinuxでの全件実行を維持し、
+Windowsへの追加は必要性に応じて判断します。
+
 ## ローカル実行
 
 分類だけを検証する場合:
@@ -70,6 +88,63 @@ GitHub Actionsでは同じ情報とスキップ理由ごとの件数をStep Summ
 1. `unittest.TestCase` を持つ `tests/test_*.py` を追加する。
 2. 主な実行環境に対応する1グループの `modules` に、拡張子なしのモジュール名を辞書順で追加する。
 3. 別環境で必要なケースだけを再実行する場合は、その環境の `selectors` に完全名を辞書順で追加する。
-4. discovery checker、`python scripts/run_ci_tests.py --validate`、対象グループを実行する。
+4. Windows GUIでの確認が必須なら、テストメソッドのdocstringとCIのWindows GUI実行リストを更新する。
+5. discovery checker、`python scripts/run_ci_tests.py --validate`、対象グループを実行する。
 
 モジュール単位の所有先を決められない場合は、テスト責務を分けてから登録してください。
+
+## 実音声の文字起こし精度
+
+`.github/workflows/transcription-accuracy.yml` は、通常グループから独立した重い検証です。固定した日本語実録音を `large-v3` で認識し、PR baseと変更後を比較します。評価器の単体テスト `test_transcription_benchmark` はportable-unitに所属します。認識JSON・ログ・比較表と評価範囲は [実音声による文字起こしCI](TRANSCRIPTION_ACCURACY_CI.md) を参照してください。
+## 変更範囲に応じたジョブ選択
+
+CIとCodeQLはPR・mainへのpushで起動し、`scripts/ci_impact.py` がジョブの実行範囲を決めます。
+PRはbase SHAとマージ候補、pushはbefore SHAと現在のSHAを比較します。改名は旧・新両パスを評価し、複数領域は和集合にします。
+
+PR内の更新は同じPRの古いCIをキャンセルします。mainへのpushと手動実行はrun IDごとに独立した同時実行グループを使います。
+コード変更の直後にドキュメント変更がpushされても、先行するコードの検証を完了させます。
+`cancel-in-progress: false`だけでは同じグループの待機中実行が置換されるため、グループ自体を分けています。
+
+| 変更範囲 | 実行する検証 |
+| --- | --- |
+| README.md、AGENTS.md、LICENSE、docs内のMarkdownのみ | Python品質チェック |
+| src | 品質、Portable・Qt・FFmpeg、Windows実行時、ランチャー、FFmpeg 6互換性 |
+| assets、schemas | 品質、Portable・Qt・FFmpeg、Windows実行時、FFmpeg 6互換性 |
+| 分類済みのtest_*.pyのみ | 品質と、そのテストが所属するジョブ（Windows再実行用selectorも評価） |
+| CI設定、依存関係、VERSION、installer、launcher、runtime、scripts、未分類のパス | 全検証 |
+
+通常のアプリ変更ではWindowsインストーラービルドを省略します。アプリ内の間接依存を見落とさないよう、src内の変更では実行時テストを広く維持します。
+テスト共通ヘルパーや削除済みの未分類テストは全検証です。差分取得失敗、初回push、手動CI実行は全検証へ倒します。
+CodeQLはドキュメントのみの変更では解析ジョブを省略しますが、定期実行は全解析します。GUI性能検証の既存パス条件と手動deep runtime検証は維持します。
+
+`CI validation result` は分類の成功と計画どおりの結果を必須とし、選択されたジョブの失敗・キャンセル・予期しないスキップを拒否します。
+ジョブ名は維持し、ワークフロー全体のパスフィルターによる必須チェックのPendingを避けます。
+VERSION・リリース基盤変更では従来どおり全検証し、Portableとインストーラーの検証はRelease readinessへ委譲します。
+
+判定の回帰テストは `python -m unittest tests.test_ci_impact tests.test_ci_test_groups tests.test_release_distribution` で実行します。
+GitHub Actionsの条件仕様: https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-jobs-with-conditions
+
+## インストーラー検証のダウンロードキャッシュ
+
+通常CIの `Windows installer smoke` とRelease readinessの `Install and start prepared package` は、
+`actions/setup-python` のpipキャッシュを利用します。Python準備より前に `GITHUB_ENV` へ
+`PIP_CACHE_DIR` を設定し、ランナーの一時ディレクトリ内の `installer-pip-cache` に揃えます。
+製品ランチャーから起動する実セットアップにもこの環境変数を引き継ぎます。
+
+キャッシュの識別にはOS・アーキテクチャ・Pythonバージョンに加え、`requirements.txt`、
+`runtime/runtime-contract.json`、CPU/CUDA両方のロックファイルを使います。
+Release readinessでは `release-tools/` 以下のファイルを参照します。
+依存定義を変更した場合は新しいキーになり、互換性のある過去のダウンロードキャッシュがあれば再利用します。
+
+保存するのはpipのキャッシュだけです。インストール済み仮想環境やセットアップ成功記録は復元しません。
+キャッシュ命中の有無にかかわらず、インストール・移行・更新・新しい仮想環境の作成・
+`--require-hashes` による依存インストール・`pip check`・実行環境検証・GUI起動・異常系検証を実行します。
+初回やキャッシュ失効時は従来どおりダウンロードします。
+
+効果は `Set up Python 3.10` のキャッシュ復元時間、インストール・起動ステップ、
+`Post Set up Python 3.10` のキャッシュ保存時間を合算して比較します。
+パッケージの展開・インストール時間は残るため、全体の短縮幅はキャッシュが温まった後の実測で確認します。
+mainのキャッシュはPRからも参照できますが、PR側の保存可否や再利用範囲はGitHubのキャッシュ権限・スコープに従います。
+
+参考: [setup-pythonのキャッシュ実装](https://github.com/actions/setup-python/blob/main/src/cache-distributions/pip-cache.ts)、
+[pipのキャッシュ仕様](https://pip.pypa.io/en/stable/topics/caching/)

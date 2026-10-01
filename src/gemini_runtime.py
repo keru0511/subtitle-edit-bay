@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from .application_logging import redact_text
+from .process_utils import VersionProbeRun, hidden_subprocess_kwargs
 
 
 GEMINI_MIN_VERSION = (0, 1, 0)
@@ -66,7 +67,7 @@ def detect_gemini(
     *,
     environment: Mapping[str, str] | None = None,
     which: Callable[[str], str | None] = shutil.which,
-    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    run: VersionProbeRun = subprocess.run,
 ) -> GeminiRuntimeInfo:
     """Find and verify an installed Gemini CLI without starting ACP.
 
@@ -114,7 +115,7 @@ def detect_gemini(
                 timeout=5,
                 check=False,
                 shell=False,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                creationflags=hidden_subprocess_kwargs().get("creationflags", 0),
             )
         except (OSError, subprocess.TimeoutExpired):
             continue
@@ -184,7 +185,7 @@ def _parse_gemini_version(value: str, candidate: str) -> tuple[int, int, int] | 
         r"gemini(?:\.exe|\.cmd)?", Path(candidate).name.casefold()
     ):
         return None
-    return tuple(int(group or 0) for group in match.groups())  # type: ignore[return-value]
+    return (int(match.group(1) or 0), int(match.group(2) or 0), int(match.group(3) or 0))
 
 
 def _is_supported_gemini_version(version: tuple[int, int, int]) -> bool:

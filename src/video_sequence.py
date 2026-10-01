@@ -19,8 +19,10 @@ import math
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable
+from typing import Callable, TypedDict
 from uuid import uuid4
+
+from src.data_boundary import coerce_float, coerce_int, is_object_mapping, is_object_sequence
 
 
 VIDEO_SEQUENCE_SCHEMA_VERSION = 1
@@ -30,6 +32,39 @@ _TIME_PRECISION = 3
 _TIME_EPSILON = 0.0005
 
 
+class SequencePositionPayload(TypedDict):
+    clip_id: str
+    source_time: float
+
+
+class SequenceTimelineClipView(TypedDict):
+    clipId: str
+    assetId: str
+    sourceStart: float
+    sourceEnd: float
+    outputStart: float
+    outputEnd: float
+    duration: float
+    overlap: float
+    transition: dict[object, object]
+
+
+class SequenceTimelineView(TypedDict):
+    outputDuration: float
+    clips: list[SequenceTimelineClipView]
+
+
+class SequenceAssetView(TypedDict):
+    id: str
+    path: str
+    duration: float
+
+
+class VideoSequenceView(SequenceTimelineView):
+    schemaVersion: int
+    assets: list[SequenceAssetView]
+
+
 class VideoSequenceError(ValueError):
     """Raised when a multi-clip sequence is malformed or unsafe to mutate."""
 
@@ -37,9 +72,9 @@ class VideoSequenceError(ValueError):
 SequenceError = VideoSequenceError
 
 
-def _finite_seconds(value: Any, field_name: str) -> float:
+def _finite_seconds(value: object, field_name: str) -> float:
     try:
-        result = float(value)
+        result = coerce_float(value)
     except (TypeError, ValueError) as error:
         raise VideoSequenceError(f"{field_name} must be a number") from error
     if not math.isfinite(result):
@@ -47,7 +82,7 @@ def _finite_seconds(value: Any, field_name: str) -> float:
     return result
 
 
-def _required_id(value: Any, field_name: str) -> str:
+def _required_id(value: object, field_name: str) -> str:
     identifier = str(value or "").strip()
     if not identifier:
         raise VideoSequenceError(f"{field_name} is required")
@@ -63,8 +98,8 @@ def _rounded(value: float) -> float:
 
 
 def _validate_range(
-    source_start: Any,
-    source_end: Any,
+    source_start: object,
+    source_end: object,
     field_prefix: str,
     *,
     asset_duration: float = 0.0,
@@ -74,13 +109,9 @@ def _validate_range(
     if start < 0.0:
         raise VideoSequenceError(f"{field_prefix}.source_start must be non-negative")
     if end - start < MIN_SEQUENCE_CLIP_DURATION_SECONDS - _TIME_EPSILON:
-        raise VideoSequenceError(
-            f"{field_prefix} must be at least {MIN_SEQUENCE_CLIP_DURATION_SECONDS:.2f} seconds"
-        )
+        raise VideoSequenceError(f"{field_prefix} must be at least {MIN_SEQUENCE_CLIP_DURATION_SECONDS:.2f} seconds")
     if asset_duration > 0.0 and end > asset_duration + _TIME_EPSILON:
-        raise VideoSequenceError(
-            f"{field_prefix}.source_end exceeds the asset duration ({asset_duration:.3f})"
-        )
+        raise VideoSequenceError(f"{field_prefix}.source_end exceeds the asset duration ({asset_duration:.3f})")
     return _rounded(start), _rounded(end)
 
 
@@ -91,7 +122,7 @@ class SequenceAsset:
     id: str
     path: str
     duration_seconds: float = 0.0
-    extras: dict[str, Any] = field(default_factory=dict)
+    extras: dict[object, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         identifier = _required_id(self.id, "asset.id")
@@ -107,14 +138,14 @@ class SequenceAsset:
         object.__setattr__(self, "extras", deepcopy(self.extras))
 
     @classmethod
-    def from_json(cls, payload: Mapping[str, Any], *, index: int = 0) -> "SequenceAsset":
-        if not isinstance(payload, Mapping):
+    def from_json(cls, payload: object, *, index: int = 0) -> "SequenceAsset":
+        if not is_object_mapping(payload):
             raise VideoSequenceError(f"sequence.assets[{index}] must be an object")
         raw_duration = payload.get("duration_seconds", payload.get("duration", 0.0))
         return cls(
-            id=payload.get("id"),
+            id=_required_id(payload.get("id"), "asset.id"),
             path=str(payload.get("path", payload.get("file", ""))),
-            duration_seconds=raw_duration,
+            duration_seconds=_finite_seconds(raw_duration, "asset.duration_seconds"),
             extras=deepcopy(
                 {
                     key: value
@@ -124,8 +155,8 @@ class SequenceAsset:
             ),
         )
 
-    def to_json(self) -> dict[str, Any]:
-        payload = {
+    def to_json(self) -> dict[object, object]:
+        payload: dict[object, object] = {
             "id": self.id,
             "path": self.path,
             "duration_seconds": self.duration_seconds,
@@ -144,14 +175,12 @@ class SequenceTransition:
 
     type: str = "cut"
     duration: float = 0.0
-    extras: dict[str, Any] = field(default_factory=dict)
+    extras: dict[object, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         transition_type = str(self.type or "").strip().lower()
         if transition_type not in VALID_SEQUENCE_TRANSITION_TYPES:
-            raise VideoSequenceError(
-                f"transition.type must be one of {VALID_SEQUENCE_TRANSITION_TYPES}"
-            )
+            raise VideoSequenceError(f"transition.type must be one of {VALID_SEQUENCE_TRANSITION_TYPES}")
         duration = _finite_seconds(self.duration, "transition.duration")
         if duration < 0.0:
             raise VideoSequenceError("transition.duration must be non-negative")
@@ -164,24 +193,20 @@ class SequenceTransition:
     @classmethod
     def from_json(
         cls,
-        payload: Mapping[str, Any] | None,
+        payload: object,
         *,
         default_type: str = "cut",
     ) -> "SequenceTransition":
         if payload is None:
             return cls(type=default_type)
-        if not isinstance(payload, Mapping):
+        if not is_object_mapping(payload):
             raise VideoSequenceError("clip.transition must be an object")
         duration = payload.get("duration", payload.get("duration_seconds", 0.0))
         return cls(
-            type=payload.get("type", default_type),
-            duration=duration,
+            type=str(payload.get("type", default_type) or ""),
+            duration=_finite_seconds(duration, "transition.duration"),
             extras=deepcopy(
-                {
-                    key: value
-                    for key, value in payload.items()
-                    if key not in {"type", "duration", "duration_seconds"}
-                }
+                {key: value for key, value in payload.items() if key not in {"type", "duration", "duration_seconds"}}
             ),
         )
 
@@ -193,8 +218,8 @@ class SequenceTransition:
     def duration_seconds(self) -> float:
         return self.duration
 
-    def to_json(self) -> dict[str, Any]:
-        payload = {"type": self.type, "duration": self.duration}
+    def to_json(self) -> dict[object, object]:
+        payload: dict[object, object] = {"type": self.type, "duration": self.duration}
         payload.update(deepcopy(self.extras))
         return payload
 
@@ -212,7 +237,7 @@ class SequenceClip:
     volume: float = 1.0
     audio_offset_seconds: float = 0.0
     muted: bool = False
-    extras: dict[str, Any] = field(default_factory=dict)
+    extras: dict[object, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         identifier = _required_id(self.id, "clip.id")
@@ -239,8 +264,8 @@ class SequenceClip:
         object.__setattr__(self, "extras", deepcopy(self.extras))
 
     @classmethod
-    def from_json(cls, payload: Mapping[str, Any], *, index: int = 0) -> "SequenceClip":
-        if not isinstance(payload, Mapping):
+    def from_json(cls, payload: object, *, index: int = 0) -> "SequenceClip":
+        if not is_object_mapping(payload):
             raise VideoSequenceError(f"sequence.clips[{index}] must be an object")
         asset_id = payload.get("asset_id", payload.get("source_asset_id"))
         offset = payload.get(
@@ -248,24 +273,38 @@ class SequenceClip:
             payload.get("audio_offset", payload.get("offset_seconds", 0.0)),
         )
         return cls(
-            id=payload.get("id"),
-            asset_id=asset_id,
-            source_start=payload.get("source_start", payload.get("start", 0.0)),
-            source_end=payload.get("source_end", payload.get("end", 0.0)),
+            id=_required_id(payload.get("id"), "clip.id"),
+            asset_id=_required_id(asset_id, "clip.asset_id"),
+            source_start=_finite_seconds(payload.get("source_start", payload.get("start", 0.0)), "clip.source_start"),
+            source_end=_finite_seconds(payload.get("source_end", payload.get("end", 0.0)), "clip.source_end"),
             transition=SequenceTransition.from_json(payload.get("transition")),
-            audio_linked=payload.get("audio_linked", payload.get("audioLinked", True)),
-            volume=payload.get("volume", payload.get("audio_volume", 1.0)),
-            audio_offset_seconds=offset,
-            muted=payload.get("muted", payload.get("audio_muted", False)),
+            audio_linked=bool(payload.get("audio_linked", payload.get("audioLinked", True))),
+            volume=_finite_seconds(payload.get("volume", payload.get("audio_volume", 1.0)), "clip.volume"),
+            audio_offset_seconds=_finite_seconds(offset, "clip.audio_offset_seconds"),
+            muted=bool(payload.get("muted", payload.get("audio_muted", False))),
             extras=deepcopy(
                 {
                     key: value
                     for key, value in payload.items()
-                    if key not in {
-                        "id", "asset_id", "source_asset_id", "source_start", "source_end",
-                        "start", "end", "transition", "audio_linked", "audioLinked",
-                        "volume", "audio_volume", "audio_offset_seconds", "audio_offset",
-                        "offset_seconds", "muted", "audio_muted",
+                    if key
+                    not in {
+                        "id",
+                        "asset_id",
+                        "source_asset_id",
+                        "source_start",
+                        "source_end",
+                        "start",
+                        "end",
+                        "transition",
+                        "audio_linked",
+                        "audioLinked",
+                        "volume",
+                        "audio_volume",
+                        "audio_offset_seconds",
+                        "audio_offset",
+                        "offset_seconds",
+                        "muted",
+                        "audio_muted",
                     }
                 }
             ),
@@ -283,8 +322,8 @@ class SequenceClip:
     def offset_seconds(self) -> float:
         return self.audio_offset_seconds
 
-    def to_json(self) -> dict[str, Any]:
-        payload = {
+    def to_json(self) -> dict[object, object]:
+        payload: dict[object, object] = {
             "id": self.id,
             "asset_id": self.asset_id,
             "source_start": self.source_start,
@@ -306,7 +345,7 @@ class SequencePosition:
     clip_id: str
     source_time: float
 
-    def to_json(self) -> dict[str, Any]:
+    def to_json(self) -> SequencePositionPayload:
         return {"clip_id": self.clip_id, "source_time": self.source_time}
 
 
@@ -324,7 +363,7 @@ class SequenceTimelineClip:
     def output_end(self) -> float:
         return _rounded(self.output_start + self.duration)
 
-    def as_view(self) -> dict[str, Any]:
+    def as_view(self) -> SequenceTimelineClipView:
         return {
             "clipId": self.clip.id,
             "assetId": self.clip.asset_id,
@@ -344,10 +383,11 @@ class SequenceTimeline:
     total_duration: float
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "clips", tuple(self.clips))
+        clips = tuple(self.clips)
+        object.__setattr__(self, "clips", clips)
         object.__setattr__(self, "total_duration", _rounded(max(0.0, self.total_duration)))
 
-    def output_to_source_seconds(self, output_seconds: Any) -> SequencePosition:
+    def output_to_source_seconds(self, output_seconds: object) -> SequencePosition:
         if not self.clips:
             raise VideoSequenceError("sequence has no clips")
         position = _finite_seconds(output_seconds, "output_seconds")
@@ -363,7 +403,7 @@ class SequenceTimeline:
             source_time=_rounded(selected.clip.source_start + offset),
         )
 
-    def source_to_output_seconds(self, clip_id: str, source_seconds: Any) -> float:
+    def source_to_output_seconds(self, clip_id: str, source_seconds: object) -> float:
         identifier = _required_id(clip_id, "clip_id")
         selected = next((entry for entry in self.clips if entry.clip.id == identifier), None)
         if selected is None:
@@ -375,7 +415,7 @@ class SequenceTimeline:
         )
         return _rounded(selected.output_start + source_position - selected.clip.source_start)
 
-    def as_view(self) -> dict[str, Any]:
+    def as_view(self) -> SequenceTimelineView:
         return {
             "outputDuration": self.total_duration,
             "clips": [entry.as_view() for entry in self.clips],
@@ -392,9 +432,7 @@ def build_sequence_timeline(clips: tuple[SequenceClip, ...] | list[SequenceClip]
         if index == 0 and clip.transition.overlap_seconds > _TIME_EPSILON:
             raise VideoSequenceError("the first clip must use a cut transition")
         if index > 0 and overlap > min(clips[index - 1].duration, clip.duration) + _TIME_EPSILON:
-            raise VideoSequenceError(
-                f"transition into clip {clip.id!r} exceeds adjacent clip duration"
-            )
+            raise VideoSequenceError(f"transition into clip {clip.id!r} exceeds adjacent clip duration")
         output_start = max(0.0, total_duration - overlap)
         entry = SequenceTimelineClip(
             clip=clip,
@@ -433,9 +471,7 @@ def _validate_sequence_parts(
             previous_duration = clips[index - 1].duration
             maximum_overlap = min(previous_duration, clip.duration)
             if clip.transition.overlap_seconds > maximum_overlap + _TIME_EPSILON:
-                raise VideoSequenceError(
-                    f"transition into clip {clip.id!r} exceeds adjacent clip duration"
-                )
+                raise VideoSequenceError(f"transition into clip {clip.id!r} exceeds adjacent clip duration")
 
 
 @dataclass(frozen=True)
@@ -445,7 +481,7 @@ class VideoSequence:
     assets: tuple[SequenceAsset, ...] = ()
     clips: tuple[SequenceClip, ...] = ()
     schema_version: int = VIDEO_SEQUENCE_SCHEMA_VERSION
-    extras: dict[str, Any] = field(default_factory=dict)
+    extras: dict[object, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         try:
@@ -469,54 +505,42 @@ class VideoSequence:
     @classmethod
     def from_json(
         cls,
-        payload: Mapping[str, Any] | None,
+        payload: object,
         *,
-        legacy_video: Mapping[str, Any] | None = None,
+        legacy_video: object | None = None,
     ) -> "VideoSequence":
         if payload is None:
             if legacy_video is None:
                 return cls()
             return cls.from_legacy_video(legacy_video)
-        if not isinstance(payload, Mapping):
+        if not is_object_mapping(payload):
             raise VideoSequenceError("sequence must be an object")
         try:
-            schema_version = int(payload.get("schema_version", VIDEO_SEQUENCE_SCHEMA_VERSION))
+            schema_version = coerce_int(payload.get("schema_version", VIDEO_SEQUENCE_SCHEMA_VERSION))
         except (TypeError, ValueError) as error:
             raise VideoSequenceError("sequence.schema_version must be an integer") from error
         if schema_version <= 0 or schema_version > VIDEO_SEQUENCE_SCHEMA_VERSION:
-            raise VideoSequenceError(
-                f"unsupported sequence.schema_version: {payload.get('schema_version')!r}"
-            )
+            raise VideoSequenceError(f"unsupported sequence.schema_version: {payload.get('schema_version')!r}")
         raw_assets = payload.get("assets", [])
         raw_clips = payload.get("clips", [])
-        if not isinstance(raw_assets, list):
+        if not isinstance(raw_assets, list) or not is_object_sequence(raw_assets):
             raise VideoSequenceError("sequence.assets must be an array")
-        if not isinstance(raw_clips, list):
+        if not isinstance(raw_clips, list) or not is_object_sequence(raw_clips):
             raise VideoSequenceError("sequence.clips must be an array")
-        assets = tuple(
-            SequenceAsset.from_json(asset, index=index)
-            for index, asset in enumerate(raw_assets)
-        )
-        clips = tuple(
-            SequenceClip.from_json(clip, index=index)
-            for index, clip in enumerate(raw_clips)
-        )
+        assets = tuple(SequenceAsset.from_json(asset, index=index) for index, asset in enumerate(raw_assets))
+        clips = tuple(SequenceClip.from_json(clip, index=index) for index, clip in enumerate(raw_clips))
         return cls(
             assets=assets,
             clips=clips,
             schema_version=schema_version,
             extras=deepcopy(
-                {
-                    key: value
-                    for key, value in payload.items()
-                    if key not in {"schema_version", "assets", "clips"}
-                }
+                {key: value for key, value in payload.items() if key not in {"schema_version", "assets", "clips"}}
             ),
         )
 
     @classmethod
-    def from_legacy_video(cls, video: Mapping[str, Any]) -> "VideoSequence":
-        if not isinstance(video, Mapping):
+    def from_legacy_video(cls, video: object) -> "VideoSequence":
+        if not is_object_mapping(video):
             raise VideoSequenceError("legacy video must be an object")
         path = str(video.get("path", "")).strip()
         if not path:
@@ -529,13 +553,7 @@ class VideoSequence:
             id="asset-video",
             path=path,
             duration_seconds=duration,
-            extras=deepcopy(
-                {
-                    key: value
-                    for key, value in video.items()
-                    if key not in {"path", "duration_seconds"}
-                }
-            ),
+            extras=deepcopy({key: value for key, value in video.items() if key not in {"path", "duration_seconds"}}),
         )
         clips: tuple[SequenceClip, ...] = ()
         # Unknown duration is kept as an asset reference but must not be
@@ -580,12 +598,12 @@ class VideoSequence:
             and not clip.muted
         )
 
-    def sync_legacy_video(self, video: Mapping[str, Any]) -> "VideoSequence":
+    def sync_legacy_video(self, video: object) -> "VideoSequence":
         """Synchronize compatibility asset/clip fields with ``project.video``."""
 
         if not self.is_legacy_single_video():
             raise VideoSequenceError("explicit sequence cannot be synchronized as a legacy video")
-        if not isinstance(video, Mapping):
+        if not is_object_mapping(video):
             raise VideoSequenceError("legacy video must be an object")
         path = str(video.get("path", "")).strip()
         if not path:
@@ -619,8 +637,8 @@ class VideoSequence:
             extras=deepcopy(self.extras),
         )
 
-    def to_json(self) -> dict[str, Any]:
-        payload = {
+    def to_json(self) -> dict[object, object]:
+        payload: dict[object, object] = {
             "schema_version": self.schema_version,
             "assets": [asset.to_json() for asset in self.assets],
             "clips": [clip.to_json() for clip in self.clips],
@@ -636,7 +654,7 @@ class VideoSequence:
     def output_duration(self) -> float:
         return self.timeline.total_duration
 
-    def as_view(self) -> dict[str, Any]:
+    def as_view(self) -> VideoSequenceView:
         return {
             "schemaVersion": self.schema_version,
             "assets": [
@@ -650,10 +668,10 @@ class VideoSequence:
             **self.timeline.as_view(),
         }
 
-    def output_to_source_seconds(self, output_seconds: Any) -> SequencePosition:
+    def output_to_source_seconds(self, output_seconds: object) -> SequencePosition:
         return self.timeline.output_to_source_seconds(output_seconds)
 
-    def source_to_output_seconds(self, clip_id: str, source_seconds: Any) -> float:
+    def source_to_output_seconds(self, clip_id: str, source_seconds: object) -> float:
         return self.timeline.source_to_output_seconds(clip_id, source_seconds)
 
     def _replace(
@@ -684,9 +702,9 @@ class VideoSequence:
         raise VideoSequenceError(f"unknown clip: {identifier}")
 
     @staticmethod
-    def _index(value: Any, field_name: str, *, maximum: int) -> int:
+    def _index(value: object, field_name: str, *, maximum: int) -> int:
         try:
-            index = int(value)
+            index = coerce_int(value)
         except (TypeError, ValueError) as error:
             raise VideoSequenceError(f"{field_name} must be an integer") from error
         if index != value or index < 0 or index > maximum:
@@ -694,7 +712,7 @@ class VideoSequence:
         return index
 
     @staticmethod
-    def _transition(value: SequenceTransition | Mapping[str, Any] | None) -> SequenceTransition:
+    def _transition(value: SequenceTransition | Mapping[object, object] | None) -> SequenceTransition:
         if value is None:
             return SequenceTransition()
         if isinstance(value, SequenceTransition):
@@ -704,10 +722,10 @@ class VideoSequence:
     def add_asset(
         self,
         path: str,
-        duration_seconds: Any = 0.0,
+        duration_seconds: object = 0.0,
         *,
         asset_id: str | None = None,
-        extras: Mapping[str, Any] | None = None,
+        extras: Mapping[object, object] | None = None,
     ) -> "VideoSequence":
         identifier = str(asset_id or "").strip() or _new_id("asset")
         if any(asset.id == identifier for asset in self.assets):
@@ -715,7 +733,7 @@ class VideoSequence:
         asset = SequenceAsset(
             id=identifier,
             path=path,
-            duration_seconds=duration_seconds,
+            duration_seconds=_finite_seconds(duration_seconds, "asset.duration_seconds"),
             extras=deepcopy(dict(extras or {})),
         )
         return self._replace(assets=(*self.assets, asset))
@@ -736,17 +754,17 @@ class VideoSequence:
     def add_clip(
         self,
         asset_id: str,
-        source_start: Any,
-        source_end: Any,
+        source_start: object,
+        source_end: object,
         *,
         clip_id: str | None = None,
         index: int | None = None,
-        transition: SequenceTransition | Mapping[str, Any] | None = None,
+        transition: SequenceTransition | Mapping[object, object] | None = None,
         audio_linked: bool = True,
-        volume: Any = 1.0,
-        audio_offset_seconds: Any = 0.0,
+        volume: object = 1.0,
+        audio_offset_seconds: object = 0.0,
         muted: bool = False,
-        extras: Mapping[str, Any] | None = None,
+        extras: Mapping[object, object] | None = None,
     ) -> "VideoSequence":
         asset = self._asset(asset_id)
         start, end = _validate_range(
@@ -766,8 +784,8 @@ class VideoSequence:
             source_end=end,
             transition=self._transition(transition),
             audio_linked=audio_linked,
-            volume=volume,
-            audio_offset_seconds=audio_offset_seconds,
+            volume=_finite_seconds(volume, "clip.volume"),
+            audio_offset_seconds=_finite_seconds(audio_offset_seconds, "clip.audio_offset_seconds"),
             muted=muted,
             extras=deepcopy(dict(extras or {})),
         )
@@ -805,7 +823,7 @@ class VideoSequence:
 
     move_clip = reorder_clip
 
-    def trim_clip(self, clip_id: str, source_start: Any, source_end: Any) -> "VideoSequence":
+    def trim_clip(self, clip_id: str, source_start: object, source_end: object) -> "VideoSequence":
         index = self._clip_index(clip_id)
         clip = self.clips[index]
         asset = self._asset(clip.asset_id)
@@ -822,19 +840,19 @@ class VideoSequence:
     def set_transition(
         self,
         clip_id: str,
-        transition: SequenceTransition | Mapping[str, Any] | str,
-        duration: Any | None = None,
+        transition: SequenceTransition | Mapping[object, object] | str,
+        duration: object | None = None,
     ) -> "VideoSequence":
         index = self._clip_index(clip_id)
         if isinstance(transition, str):
             next_transition = SequenceTransition(
                 type=transition,
-                duration=0.0 if duration is None else duration,
+                duration=0.0 if duration is None else _finite_seconds(duration, "transition.duration"),
             )
         else:
             next_transition = self._transition(transition)
             if duration is not None:
-                next_transition = replace(next_transition, duration=duration)
+                next_transition = replace(next_transition, duration=_finite_seconds(duration, "transition.duration"))
         clips = list(self.clips)
         clips[index] = replace(clips[index], transition=next_transition)
         return self._replace(clips=tuple(clips))
@@ -846,8 +864,8 @@ class VideoSequence:
         clip_id: str,
         *,
         audio_linked: bool | None = None,
-        volume: Any | None = None,
-        audio_offset_seconds: Any | None = None,
+        volume: object | None = None,
+        audio_offset_seconds: object | None = None,
         muted: bool | None = None,
     ) -> "VideoSequence":
         index = self._clip_index(clip_id)
@@ -855,11 +873,11 @@ class VideoSequence:
         updated = replace(
             clip,
             audio_linked=clip.audio_linked if audio_linked is None else audio_linked,
-            volume=clip.volume if volume is None else volume,
+            volume=clip.volume if volume is None else _finite_seconds(volume, "clip.volume"),
             audio_offset_seconds=(
                 clip.audio_offset_seconds
                 if audio_offset_seconds is None
-                else audio_offset_seconds
+                else _finite_seconds(audio_offset_seconds, "clip.audio_offset_seconds")
             ),
             muted=clip.muted if muted is None else muted,
         )

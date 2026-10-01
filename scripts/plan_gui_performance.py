@@ -5,7 +5,41 @@ import json
 import math
 import subprocess
 from pathlib import Path
-from typing import Sequence
+from typing import Protocol, Sequence, TypedDict, cast
+
+
+class PerformanceMatrixJob(TypedDict):
+    repetition: int
+    suite: str
+    segment_count: int
+
+
+class PerformanceMatrix(TypedDict):
+    include: list[PerformanceMatrixJob]
+
+
+class _PerformancePlanBase(TypedDict):
+    repetitions: int
+    playback_seconds: str
+    max_regression_percent: str
+    fail_on_regression: str
+    matrix: PerformanceMatrix
+
+
+class PerformancePlan(_PerformancePlanBase, total=False):
+    compare_ref: str
+
+
+class _PlanArgs(Protocol):
+    repetitions: str
+    playback_seconds: str
+    compare_ref: str
+    event_name: str
+    base_sha: str
+    max_regression_percent: str
+    fail_on_regression: str
+    repository: Path
+    github_output: Path | None
 
 
 def validate_inputs(
@@ -13,7 +47,7 @@ def validate_inputs(
     playback_seconds: str,
     max_regression_percent: str,
     fail_on_regression: str,
-) -> dict[str, object]:
+) -> PerformancePlan:
     try:
         parsed_repetitions = int(repetitions)
     except ValueError as error:
@@ -43,7 +77,13 @@ def validate_inputs(
         "playback_seconds": format(parsed_playback, "g"),
         "max_regression_percent": format(parsed_regression, "g"),
         "fail_on_regression": parsed_fail,
-        "matrix": {"repetition": list(range(1, parsed_repetitions + 1))},
+        "matrix": {
+            "include": [
+                {"repetition": repetition, "suite": suite, "segment_count": count}
+                for suite, count in (("paired", 3000), ("large", 10000))
+                for repetition in range(1, parsed_repetitions + 1)
+            ]
+        },
     }
 
 
@@ -64,16 +104,31 @@ def resolve_commit(revision: str, *, repository: Path) -> str:
     return resolved
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+def select_comparison_commit(*, event_name: str, base_sha: str, compare_ref: str, repository: Path) -> str:
+    """PRはイベントの固定base SHA、手動実行は指定refを比較対象にする。"""
+    if event_name == "pull_request":
+        if len(base_sha) != 40 or any(character not in "0123456789abcdef" for character in base_sha):
+            raise ValueError("PRの比較には40桁のbase SHAが必要です")
+        revision = base_sha
+    elif event_name == "workflow_dispatch":
+        revision = compare_ref
+    else:
+        raise ValueError(f"未対応の実行イベントです: {event_name}")
+    return resolve_commit(revision, repository=repository)
+
+
+def parse_args(argv: Sequence[str] | None = None) -> _PlanArgs:
     parser = argparse.ArgumentParser(description="Validate GUI benchmark inputs and create its repetition matrix.")
     parser.add_argument("--repetitions", default="3")
     parser.add_argument("--playback-seconds", default="30")
     parser.add_argument("--compare-ref", default="b600e90")
+    parser.add_argument("--event-name", default="workflow_dispatch")
+    parser.add_argument("--base-sha", default="")
     parser.add_argument("--max-regression-percent", default="20")
     parser.add_argument("--fail-on-regression", default="false")
     parser.add_argument("--repository", type=Path, default=Path.cwd())
     parser.add_argument("--github-output", type=Path)
-    return parser.parse_args(argv)
+    return cast(_PlanArgs, parser.parse_args(argv))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -85,7 +140,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.max_regression_percent,
             args.fail_on_regression,
         )
-        values["compare_ref"] = resolve_commit(args.compare_ref, repository=args.repository)
+        values["compare_ref"] = select_comparison_commit(
+            event_name=args.event_name,
+            base_sha=args.base_sha,
+            compare_ref=args.compare_ref,
+            repository=args.repository,
+        )
     except ValueError as error:
         print(f"GUI performance input error: {error}")
         return 2

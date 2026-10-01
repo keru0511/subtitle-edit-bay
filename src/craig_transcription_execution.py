@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Mapping, Sequence
 
+from .transcription_profile import DEFAULT_VAD_ONSET, DEFAULT_VAD_OFFSET
 from .transcription_execution import TranscriptionExecutionResult, transcribe_audio_with_cache
 
 
@@ -14,7 +15,7 @@ class CraigTranscriptionHint:
     initial_prompt: str = ""
     hotwords: tuple[str, ...] = ()
     cache_fingerprint: str | None = None
-    cache_settings: Mapping[str, Any] | None = None
+    cache_settings: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -65,16 +66,14 @@ def transcribe_craig_audio_file_with_cache(
     device: str = "cpu",
     compute_type: str = "int8",
     language: str | None = "ja",
-    vad_onset: float | None = 0.35,
-    vad_offset: float | None = 0.2,
+    vad_onset: float | None = DEFAULT_VAD_ONSET,
+    vad_offset: float | None = DEFAULT_VAD_OFFSET,
     skip_existing_transcripts: bool = True,
     hint: CraigTranscriptionHint | None = None,
 ) -> TranscriptionExecutionResult:
     """Run one Craig speaker audio transcription through the cache-aware runner.
 
-    This adapter keeps the Craig pipeline boundary narrow: legacy callers can omit
-    ``hint`` and retain path-exists cache reuse, while dictionary-aware callers can
-    pass prompt/hotword/fingerprint data without changing the low-level runner.
+    ヒントがない場合も、実行設定と入力音声に一致するキャッシュだけを再利用する。
     """
     resolved_hint = hint or CraigTranscriptionHint()
     return transcribe_audio_with_cache(
@@ -102,8 +101,8 @@ def transcribe_craig_audio_batch_with_cache(
     device: str = "cpu",
     compute_type: str = "int8",
     language: str | None = "ja",
-    vad_onset: float | None = 0.35,
-    vad_offset: float | None = 0.2,
+    vad_onset: float | None = DEFAULT_VAD_ONSET,
+    vad_offset: float | None = DEFAULT_VAD_OFFSET,
     skip_existing_transcripts: bool = True,
     hints_by_audio: Mapping[str, CraigTranscriptionHint] | None = None,
     default_hint: CraigTranscriptionHint | None = None,

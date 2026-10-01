@@ -5,12 +5,17 @@ import hashlib
 import json
 import os
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
+from .data_boundary import coerce_float, decode_json, is_object_list, is_object_mapping
+from .transcription_profile import (
+    DEFAULT_VAD_OFFSET as DEFAULT_VAD_OFFSET,
+    DEFAULT_VAD_ONSET as DEFAULT_VAD_ONSET,
+)
 from .ass_template import DEFAULT_SUBTITLE_FONT_SIZE
 from .assemble_video import build_loudnorm_filter
 from .burn_subs import build_ass_filter, run_ffmpeg_burn
@@ -23,8 +28,19 @@ from .merge_transcripts import max_width_for_speaker, refine_segments
 from .pipeline import build_ass_from_transcript
 from .process_utils import hidden_subprocess_kwargs
 from .render_ass import parse_track_color_args
-from .runtime_config import load_command_runtime_config, resolve_bool_option, resolve_list_option, resolve_option
+from .runtime_config import (
+    load_command_runtime_config,
+    resolve_bool_option,
+    resolve_list_option,
+    resolve_number_option,
+    resolve_option,
+    resolve_required_integer_option,
+    resolve_required_number_option,
+    resolve_required_string_option,
+    resolve_string_option,
+)
 from .runtime_dependencies import check_runtime_dependencies, format_dependency_error
+from .runtime_settings import DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT as DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT
 from .silence_cut import (
     build_no_speech_plan,
     cut_media_ranges,
@@ -44,8 +60,6 @@ DEFAULT_MODEL = "large-v3"
 DEFAULT_DEVICE = "cpu"
 DEFAULT_COMPUTE_TYPE = "int8"
 DEFAULT_LANGUAGE = "ja"
-DEFAULT_VAD_ONSET = 0.35
-DEFAULT_VAD_OFFSET = 0.2
 DEFAULT_VIDEO_CODEC = "libx264"
 DEFAULT_AUDIO_CODEC = "copy"
 DEFAULT_OUTPUT_AUDIO_TRACK = "0:a:0"
@@ -64,7 +78,6 @@ DEFAULT_SPEECH_DETECT_SILENCE_SECONDS = 0.1
 DEFAULT_SUBTITLE_MAX_GAP_SECONDS = 0.32
 DEFAULT_SUBTITLE_END_PADDING_SECONDS = 0.08
 DEFAULT_SUBTITLE_MIN_DURATION_SECONDS = 0.35
-DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT = 20.0
 SUBTITLE_VOLUME_SAMPLE_RATE = 1000
 SUBTITLE_VOLUME_RANGE_DB = 12.0
 DEFAULT_INPUT_ROOT = "video_import"
@@ -93,13 +106,13 @@ class AlignmentResult:
 @dataclass(frozen=True)
 class TranscriptionResult:
     transcript_map: dict[str, str]
-    segments: list[dict]
+    segments: list[dict[str, object]]
 
 
 @dataclass(frozen=True)
 class SegmentRefinementResult:
-    merged_segments: list[dict]
-    filtered_segments: list[dict]
+    merged_segments: list[dict[str, object]]
+    filtered_segments: list[dict[str, object]]
 
 
 @dataclass(frozen=True)
@@ -176,7 +189,7 @@ def run_transcription_stage(
     model: str = DEFAULT_MODEL,
     device: str = DEFAULT_DEVICE,
     compute_type: str = DEFAULT_COMPUTE_TYPE,
-    language: str = DEFAULT_LANGUAGE,
+    language: str | None = DEFAULT_LANGUAGE,
     vad_onset: float | None = DEFAULT_VAD_ONSET,
     vad_offset: float | None = DEFAULT_VAD_OFFSET,
     skip_existing_transcripts: bool = True,
@@ -208,7 +221,7 @@ def run_transcription_stage(
 
 
 def run_refine_stage(
-    segments: list[dict],
+    segments: list[dict[str, object]],
     *,
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
@@ -221,8 +234,8 @@ def run_refine_stage(
         subtitle_min_duration_seconds=subtitle_min_duration_seconds,
     )
     return SegmentRefinementResult(
-        merged_segments=merged_segments,
-        filtered_segments=filtered_segments,
+        merged_segments=[_string_keyed_object(segment, "merged segment") for segment in merged_segments],
+        filtered_segments=[_string_keyed_object(segment, "filtered segment") for segment in filtered_segments],
     )
 
 
@@ -262,7 +275,7 @@ def run_render_stage(
     video_path: str,
     output_dir: Path,
     audio_files: list[Path],
-    merged_segments: list[dict],
+    merged_segments: list[dict[str, object]],
     ass_path: Path,
     alignment: AlignmentResult,
     *,
@@ -420,11 +433,15 @@ def list_craig_audio_files(audio_dir: str) -> list[Path]:
     return sorted(path for path in base.iterdir() if path.is_file() and path.suffix.lower() in SUPPORTED_CRAIG_EXTENSIONS)
 
 
+def _audio_file_sort_key(path: Path) -> tuple[str, str]:
+    return path.name.casefold(), str(path).casefold()
+
+
 def resolve_craig_audio_files(audio_dir: str | None, selected_audio_files: list[str] | None = None) -> list[Path]:
     if selected_audio_files:
         files = sorted(
             {Path(path).resolve() for path in selected_audio_files},
-            key=lambda path: (path.name.casefold(), str(path).casefold()),
+            key=_audio_file_sort_key,
         )
         invalid = [path for path in files if not path.is_file() or path.suffix.lower() not in SUPPORTED_CRAIG_EXTENSIONS]
         if invalid:
@@ -516,7 +533,7 @@ def source_stream_id_for_audio(audio_path: str) -> str:
 
 
 def build_speaker_style_map(audio_files: list[Path]) -> dict[str, str]:
-    ordered_files = sorted(audio_files, key=lambda path: (path.name.casefold(), str(path).casefold()))
+    ordered_files = sorted(audio_files, key=_audio_file_sort_key)
     speaker_names = [parse_craig_speaker_name(str(path)) for path in ordered_files]
     style_map: dict[str, str] = {}
     for index, speaker_name in enumerate(speaker_names):
@@ -538,7 +555,7 @@ def decode_audio_samples(input_path: str, sample_rate: int = DEFAULT_ALIGNMENT_S
 
 def calculate_segment_volume_levels(
     audio_path: str,
-    segments: list[dict],
+    segments: list[dict[str, object]],
     sample_rate: int = SUBTITLE_VOLUME_SAMPLE_RATE,
 ) -> list[float]:
     if not segments:
@@ -550,8 +567,8 @@ def calculate_segment_volume_levels(
 
     loudness_db: list[float] = []
     for segment in segments:
-        start_sample = max(0, round(float(segment.get("start", 0.0)) * sample_rate))
-        end_sample = min(samples.size, max(start_sample + 1, round(float(segment.get("end", 0.0)) * sample_rate)))
+        start_sample = max(0, round(coerce_float(segment.get("start", 0.0)) * sample_rate))
+        end_sample = min(samples.size, max(start_sample + 1, round(coerce_float(segment.get("end", 0.0)) * sample_rate)))
         window = samples[start_sample:end_sample]
         if window.size == 0:
             loudness_db.append(-120.0)
@@ -642,9 +659,9 @@ def transcribe_audio_file(
     model: str = "large-v3",
     device: str = "cpu",
     compute_type: str = "int8",
-    language: str = "ja",
-    vad_onset: float | None = 0.35,
-    vad_offset: float | None = 0.2,
+    language: str | None = "ja",
+    vad_onset: float | None = DEFAULT_VAD_ONSET,
+    vad_offset: float | None = DEFAULT_VAD_OFFSET,
     skip_existing: bool = True,
     *,
     hint: CraigTranscriptionHint | None = None,
@@ -681,7 +698,7 @@ def resolve_alignment(
 @dataclass(frozen=True)
 class CraigTranscriptionBatch:
     transcript_map: dict[str, str]
-    segments: list[dict]
+    segments: list[dict[str, object]]
 
 
 def transcribe_craig_audio_files(
@@ -693,7 +710,7 @@ def transcribe_craig_audio_files(
     model: str = DEFAULT_MODEL,
     device: str = DEFAULT_DEVICE,
     compute_type: str = DEFAULT_COMPUTE_TYPE,
-    language: str = DEFAULT_LANGUAGE,
+    language: str | None = DEFAULT_LANGUAGE,
     vad_onset: float | None = DEFAULT_VAD_ONSET,
     vad_offset: float | None = DEFAULT_VAD_OFFSET,
     skip_existing_transcripts: bool = True,
@@ -705,8 +722,8 @@ def transcribe_craig_audio_files(
 ) -> CraigTranscriptionBatch:
     """Run WhisperX serially while overlapping CPU-only caption postprocessing."""
     transcript_map: dict[str, str] = {}
-    segment_futures: dict[str, object] = {}
-    merged_segments: list[dict] = []
+    segment_futures: dict[str, Future[list[dict[str, object]]]] = {}
+    merged_segments: list[dict[str, object]] = []
     with ThreadPoolExecutor(max_workers=max(1, postprocess_workers)) as executor:
         for audio_file in audio_files:
             expected_path = expected_audio_transcript_path(str(audio_file), str(transcript_dir))
@@ -761,7 +778,7 @@ def build_craig_segments_for_transcript(
     offset_seconds: float,
     subtitle_font_size: int = DEFAULT_SUBTITLE_FONT_SIZE,
     subtitle_volume_scale_percent: float = 0.0,
-) -> list[dict]:
+) -> list[dict[str, object]]:
     if subtitle_font_size < 3:
         raise ValueError("subtitle_font_size must be at least 3")
     if not 0.0 <= subtitle_volume_scale_percent <= 80.0:
@@ -769,10 +786,17 @@ def build_craig_segments_for_transcript(
 
     speaker_name = parse_craig_speaker_name(audio_path)
     speaker_style = style_map[speaker_name]
-    data = json.loads(Path(transcript_path).read_text(encoding="utf-8"))
-    prepared_segments: list[tuple[dict, dict, str]] = []
-    for segment in data.get("segments", []):
-        text = segment.get("text", "").strip()
+    data = _string_keyed_object(decode_json(Path(transcript_path).read_text(encoding="utf-8")), "transcript")
+    raw_segments = data.get("segments", [])
+    if not is_object_list(raw_segments):
+        raise ValueError("transcript.segments must be an array")
+    prepared_segments: list[tuple[dict[str, object], dict[str, object], str]] = []
+    for raw_segment in raw_segments:
+        segment = _string_keyed_object(raw_segment, "transcript segment")
+        raw_text = segment.get("text", "")
+        if not isinstance(raw_text, str):
+            raise ValueError("transcript segment text must be a string")
+        text = raw_text.strip()
         if not text:
             continue
         shifted = shift_segment(segment, offset_seconds)
@@ -785,14 +809,14 @@ def build_craig_segments_for_transcript(
         if subtitle_volume_scale_percent > 0.0
         else [0.0] * len(prepared_segments)
     )
-    segments: list[dict] = []
+    segments: list[dict[str, object]] = []
     for (segment, shifted, text), volume_level in zip(prepared_segments, volume_levels):
         font_scale = 1.0 + volume_level * subtitle_volume_scale_percent / 100.0
         effective_font_scale = subtitle_font_size / DEFAULT_SUBTITLE_FONT_SIZE * font_scale
         segments.append(
             {
-                "start": float(shifted["start"]),
-                "end": float(shifted["end"]),
+                "start": coerce_float(shifted["start"]),
+                "end": coerce_float(shifted["end"]),
                 "speaker": speaker_style,
                 "text": text,
                 "emphasis": segment.get("emphasis", "normal"),
@@ -811,23 +835,40 @@ def build_craig_segments_for_transcript(
     return segments
 
 
-def shift_segment(segment: dict, offset_seconds: float) -> dict | None:
-    start = float(segment.get("start", 0.0)) + offset_seconds
-    end = float(segment.get("end", 0.0)) + offset_seconds
+def _string_keyed_object(value: object, label: str) -> dict[str, object]:
+    if not is_object_mapping(value):
+        raise ValueError(f"{label} must be an object")
+    result: dict[str, object] = {}
+    for key, child in value.items():
+        if not isinstance(key, str):
+            raise ValueError(f"{label} keys must be strings")
+        result[key] = child
+    return result
+
+
+def shift_segment(segment: dict[str, object], offset_seconds: float) -> dict[str, object] | None:
+    start = coerce_float(segment.get("start", 0.0)) + offset_seconds
+    end = coerce_float(segment.get("end", 0.0)) + offset_seconds
     if end <= 0:
         return None
+    raw_words = segment.get("words", [])
+    if not is_object_list(raw_words):
+        raise ValueError("transcript segment words must be an array")
+    shifted_words: list[dict[str, object]] = []
+    for raw_word in raw_words:
+        word = _string_keyed_object(raw_word, "transcript word")
+        word_start = word.get("start")
+        word_end = word.get("end")
+        if word_start is not None:
+            word["start"] = max(0.0, coerce_float(word_start) + offset_seconds)
+        if word_end is not None:
+            word["end"] = max(0.0, coerce_float(word_end) + offset_seconds)
+        shifted_words.append(word)
     return {
         **segment,
         "start": max(0.0, start),
         "end": max(max(0.0, start), end),
-        "words": [
-            {
-                **word,
-                "start": max(0.0, float(word["start"]) + offset_seconds) if word.get("start") is not None else word.get("start"),
-                "end": max(0.0, float(word["end"]) + offset_seconds) if word.get("end") is not None else word.get("end"),
-            }
-            for word in segment.get("words", [])
-        ],
+        "words": shifted_words,
     }
 
 
@@ -838,8 +879,8 @@ def merge_craig_transcripts(
     subtitle_max_gap_seconds: float = DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     subtitle_end_padding_seconds: float = DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     subtitle_min_duration_seconds: float = DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
-) -> tuple[dict, dict]:
-    merged_segments: list[dict] = []
+) -> tuple[dict[str, list[dict[str, object]]], dict[str, list[dict[str, object]]]]:
+    merged_segments: list[dict[str, object]] = []
     for audio_path, transcript_path in transcript_map.items():
         merged_segments.extend(build_craig_segments_for_transcript(audio_path, transcript_path, style_map, offset_seconds))
     refined_result = run_refine_stage(
@@ -851,7 +892,7 @@ def merge_craig_transcripts(
     return {"segments": refined_result.merged_segments}, {"segments": refined_result.filtered_segments}
 
 
-def write_json(path: str, payload: dict) -> Path:
+def write_json(path: str, payload: dict[str, object]) -> Path:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -867,9 +908,9 @@ def run_craig_pipeline(
     model: str = "large-v3",
     device: str = "cpu",
     compute_type: str = "int8",
-    language: str = "ja",
-    vad_onset: float | None = 0.35,
-    vad_offset: float | None = 0.2,
+    language: str | None = "ja",
+    vad_onset: float | None = DEFAULT_VAD_ONSET,
+    vad_offset: float | None = DEFAULT_VAD_OFFSET,
     alignment_sample_rate: int = DEFAULT_ALIGNMENT_SAMPLE_RATE,
     video_codec: str = "libx264",
     audio_codec: str = "copy",
@@ -991,6 +1032,52 @@ def run_craig_pipeline(
     }
 
 
+@dataclass
+class _CraigPipelineArgs(argparse.Namespace):
+    target: str | None = None
+    config: str | None = None
+    video: str | None = None
+    audio_dir: str | None = None
+    audio_file: list[str] | None = None
+    output_dir: str | None = None
+    input_root: str | None = None
+    export_root: str | None = None
+    reference_audio: str | None = None
+    reference_track: str | None = None
+    alignment_offset_adjustment: float | None = None
+    model: str | None = None
+    device: str | None = None
+    compute_type: str | None = None
+    language: str | None = None
+    vad_onset: float | None = None
+    vad_offset: float | None = None
+    alignment_sample_rate: int | None = None
+    video_codec: str | None = None
+    audio_codec: str | None = None
+    output_audio_track: str | None = None
+    nvenc_preset: str | None = None
+    nvenc_cq: int | None = None
+    x264_crf: int | None = None
+    audio_normalize: bool | None = None
+    audio_target_lufs: float | None = None
+    audio_loudness_range: float | None = None
+    audio_true_peak_db: float | None = None
+    cut_no_speech: bool | None = None
+    no_speech_min_seconds: float | None = None
+    speech_padding_seconds: float | None = None
+    speech_threshold_db: float | None = None
+    speech_min_clip_seconds: float | None = None
+    skip_existing_transcripts: bool | None = None
+    postprocess_workers: int | None = None
+    track_color: list[str] | None = None
+    subtitle_font_size: int | None = None
+    subtitle_volume_scale_percent: float | None = None
+    subtitle_max_gap_seconds: float | None = None
+    subtitle_end_padding_seconds: float | None = None
+    subtitle_min_duration_seconds: float | None = None
+    run: bool | None = None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Transcribe Craig-separated audio files, align them to a video track, and burn merged subtitles.")
     parser.add_argument("target", nargs="?", help="Target folder name under video_import, or a target directory/file path.")
@@ -1035,53 +1122,58 @@ def main() -> None:
     parser.add_argument("--subtitle-end-padding-seconds", type=float, default=None, help="Extra time to keep a subtitle after the last word ends.")
     parser.add_argument("--subtitle-min-duration-seconds", type=float, default=None, help="Minimum subtitle duration after end trimming.")
     parser.add_argument("--run", action="store_true", default=None, help="Execute transcription and subtitle burn instead of printing a plan.")
-    args = parser.parse_args()
+    args = parser.parse_args(namespace=_CraigPipelineArgs())
 
     config = load_command_runtime_config("craig_pipeline", args.config)
-    target = resolve_option(args.target, config, "target")
-    video_path = resolve_option(args.video, config, "video")
-    audio_dir = resolve_option(args.audio_dir, config, "audio_dir")
+    target = resolve_string_option(args.target, config, "target")
+    video_path = resolve_string_option(args.video, config, "video")
+    audio_dir = resolve_string_option(args.audio_dir, config, "audio_dir")
     selected_audio_files = resolve_list_option(args.audio_file, config, "audio_file", [])
-    input_root = resolve_option(args.input_root, config, "input_root", DEFAULT_INPUT_ROOT)
-    export_root = resolve_option(args.export_root, config, "export_root", DEFAULT_EXPORT_ROOT)
+    input_root = resolve_required_string_option(args.input_root, config, "input_root", DEFAULT_INPUT_ROOT)
+    export_root = resolve_required_string_option(args.export_root, config, "export_root", DEFAULT_EXPORT_ROOT)
     if target:
         output_dir = args.output_dir
         video_path, audio_dir, output_dir = resolve_craig_target_paths(target, video_path, audio_dir, output_dir, input_root=input_root, export_root=export_root)
     else:
-        output_dir = resolve_option(args.output_dir, config, "output_dir", DEFAULT_OUTPUT_DIR)
-    reference_audio = resolve_option(args.reference_audio, config, "reference_audio")
-    reference_track = resolve_option(args.reference_track, config, "reference_track")
-    alignment_offset_adjustment = float(resolve_option(args.alignment_offset_adjustment, config, "alignment_offset_adjustment", DEFAULT_ALIGNMENT_OFFSET_ADJUSTMENT))
-    model = resolve_option(args.model, config, "model", DEFAULT_MODEL)
-    device = resolve_option(args.device, config, "device", DEFAULT_DEVICE)
-    compute_type = resolve_option(args.compute_type, config, "compute_type", DEFAULT_COMPUTE_TYPE)
-    language = resolve_option(args.language, config, "language", DEFAULT_LANGUAGE)
-    vad_onset = resolve_option(args.vad_onset, config, "vad_onset", DEFAULT_VAD_ONSET)
-    vad_offset = resolve_option(args.vad_offset, config, "vad_offset", DEFAULT_VAD_OFFSET)
-    alignment_sample_rate = int(resolve_option(args.alignment_sample_rate, config, "alignment_sample_rate", DEFAULT_ALIGNMENT_SAMPLE_RATE))
-    video_codec = resolve_option(args.video_codec, config, "video_codec", DEFAULT_VIDEO_CODEC)
-    audio_codec = resolve_option(args.audio_codec, config, "audio_codec", DEFAULT_AUDIO_CODEC)
-    output_audio_track = resolve_option(args.output_audio_track, config, "output_audio_track", DEFAULT_OUTPUT_AUDIO_TRACK)
-    nvenc_preset = resolve_option(args.nvenc_preset, config, "nvenc_preset", DEFAULT_NVENC_PRESET)
-    nvenc_cq = int(resolve_option(args.nvenc_cq, config, "nvenc_cq", DEFAULT_NVENC_CQ))
-    x264_crf = int(resolve_option(args.x264_crf, config, "x264_crf", DEFAULT_X264_CRF))
+        output_dir = resolve_required_string_option(args.output_dir, config, "output_dir", DEFAULT_OUTPUT_DIR)
+    if output_dir is None:
+        raise SystemExit("No output directory could be resolved for the Craig target.")
+    reference_audio = resolve_string_option(args.reference_audio, config, "reference_audio")
+    reference_track = resolve_string_option(args.reference_track, config, "reference_track")
+    alignment_offset_adjustment = resolve_required_number_option(args.alignment_offset_adjustment, config, "alignment_offset_adjustment", DEFAULT_ALIGNMENT_OFFSET_ADJUSTMENT)
+    model = resolve_required_string_option(args.model, config, "model", DEFAULT_MODEL)
+    device = resolve_required_string_option(args.device, config, "device", DEFAULT_DEVICE)
+    compute_type = resolve_required_string_option(args.compute_type, config, "compute_type", DEFAULT_COMPUTE_TYPE)
+    language = resolve_string_option(args.language, config, "language", DEFAULT_LANGUAGE)
+    vad_onset = resolve_number_option(args.vad_onset, config, "vad_onset", DEFAULT_VAD_ONSET)
+    vad_offset = resolve_number_option(args.vad_offset, config, "vad_offset", DEFAULT_VAD_OFFSET)
+    alignment_sample_rate = resolve_required_integer_option(args.alignment_sample_rate, config, "alignment_sample_rate", DEFAULT_ALIGNMENT_SAMPLE_RATE)
+    video_codec = resolve_required_string_option(args.video_codec, config, "video_codec", DEFAULT_VIDEO_CODEC)
+    audio_codec = resolve_required_string_option(args.audio_codec, config, "audio_codec", DEFAULT_AUDIO_CODEC)
+    output_audio_track = resolve_required_string_option(args.output_audio_track, config, "output_audio_track", DEFAULT_OUTPUT_AUDIO_TRACK)
+    nvenc_preset = resolve_required_string_option(args.nvenc_preset, config, "nvenc_preset", DEFAULT_NVENC_PRESET)
+    nvenc_cq = resolve_required_integer_option(args.nvenc_cq, config, "nvenc_cq", DEFAULT_NVENC_CQ)
+    x264_crf = resolve_required_integer_option(args.x264_crf, config, "x264_crf", DEFAULT_X264_CRF)
     audio_normalize = resolve_bool_option(args.audio_normalize, config, "audio_normalize", DEFAULT_AUDIO_NORMALIZE)
-    audio_target_lufs = float(resolve_option(args.audio_target_lufs, config, "audio_target_lufs", DEFAULT_AUDIO_TARGET_LUFS))
-    audio_loudness_range = float(resolve_option(args.audio_loudness_range, config, "audio_loudness_range", DEFAULT_AUDIO_LOUDNESS_RANGE))
-    audio_true_peak_db = float(resolve_option(args.audio_true_peak_db, config, "audio_true_peak_db", DEFAULT_AUDIO_TRUE_PEAK_DB))
+    audio_target_lufs = resolve_required_number_option(args.audio_target_lufs, config, "audio_target_lufs", DEFAULT_AUDIO_TARGET_LUFS)
+    audio_loudness_range = resolve_required_number_option(args.audio_loudness_range, config, "audio_loudness_range", DEFAULT_AUDIO_LOUDNESS_RANGE)
+    audio_true_peak_db = resolve_required_number_option(args.audio_true_peak_db, config, "audio_true_peak_db", DEFAULT_AUDIO_TRUE_PEAK_DB)
     cut_no_speech = resolve_bool_option(args.cut_no_speech, config, "cut_no_speech", DEFAULT_CUT_NO_SPEECH)
-    no_speech_min_seconds = float(resolve_option(args.no_speech_min_seconds, config, "no_speech_min_seconds", DEFAULT_NO_SPEECH_MIN_SECONDS))
-    speech_padding_seconds = float(resolve_option(args.speech_padding_seconds, config, "speech_padding_seconds", DEFAULT_SPEECH_PADDING_SECONDS))
-    speech_threshold_db = normalize_db_threshold(resolve_option(args.speech_threshold_db, config, "speech_threshold_db", DEFAULT_SPEECH_THRESHOLD_DB))
-    speech_min_clip_seconds = float(resolve_option(args.speech_min_clip_seconds, config, "speech_min_clip_seconds", DEFAULT_SPEECH_MIN_CLIP_SECONDS))
+    no_speech_min_seconds = resolve_required_number_option(args.no_speech_min_seconds, config, "no_speech_min_seconds", DEFAULT_NO_SPEECH_MIN_SECONDS)
+    speech_padding_seconds = resolve_required_number_option(args.speech_padding_seconds, config, "speech_padding_seconds", DEFAULT_SPEECH_PADDING_SECONDS)
+    raw_threshold = resolve_option(args.speech_threshold_db, config, "speech_threshold_db", DEFAULT_SPEECH_THRESHOLD_DB)
+    if isinstance(raw_threshold, bool) or not isinstance(raw_threshold, (str, int, float)):
+        raise SystemExit("speech_threshold_db must be a dB value")
+    speech_threshold_db = normalize_db_threshold(raw_threshold)
+    speech_min_clip_seconds = resolve_required_number_option(args.speech_min_clip_seconds, config, "speech_min_clip_seconds", DEFAULT_SPEECH_MIN_CLIP_SECONDS)
     skip_existing_transcripts = resolve_bool_option(args.skip_existing_transcripts, config, "skip_existing_transcripts", True)
-    postprocess_workers = int(resolve_option(args.postprocess_workers, config, "postprocess_workers", DEFAULT_POSTPROCESS_WORKERS))
+    postprocess_workers = resolve_required_integer_option(args.postprocess_workers, config, "postprocess_workers", DEFAULT_POSTPROCESS_WORKERS)
     track_color_map = parse_track_color_args(resolve_list_option(args.track_color, config, "track_color", []))
-    subtitle_font_size = int(resolve_option(args.subtitle_font_size, config, "subtitle_font_size", DEFAULT_SUBTITLE_FONT_SIZE))
-    subtitle_volume_scale_percent = float(resolve_option(args.subtitle_volume_scale_percent, config, "subtitle_volume_scale_percent", DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT))
-    subtitle_max_gap_seconds = float(resolve_option(args.subtitle_max_gap_seconds, config, "subtitle_max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS))
-    subtitle_end_padding_seconds = float(resolve_option(args.subtitle_end_padding_seconds, config, "subtitle_end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS))
-    subtitle_min_duration_seconds = float(resolve_option(args.subtitle_min_duration_seconds, config, "subtitle_min_duration_seconds", DEFAULT_SUBTITLE_MIN_DURATION_SECONDS))
+    subtitle_font_size = resolve_required_integer_option(args.subtitle_font_size, config, "subtitle_font_size", DEFAULT_SUBTITLE_FONT_SIZE)
+    subtitle_volume_scale_percent = resolve_required_number_option(args.subtitle_volume_scale_percent, config, "subtitle_volume_scale_percent", DEFAULT_SUBTITLE_VOLUME_SCALE_PERCENT)
+    subtitle_max_gap_seconds = resolve_required_number_option(args.subtitle_max_gap_seconds, config, "subtitle_max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS)
+    subtitle_end_padding_seconds = resolve_required_number_option(args.subtitle_end_padding_seconds, config, "subtitle_end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS)
+    subtitle_min_duration_seconds = resolve_required_number_option(args.subtitle_min_duration_seconds, config, "subtitle_min_duration_seconds", DEFAULT_SUBTITLE_MIN_DURATION_SECONDS)
     run = resolve_bool_option(args.run, config, "run", False)
 
     dependency_error = format_dependency_error(

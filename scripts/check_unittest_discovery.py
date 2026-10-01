@@ -7,7 +7,7 @@ import sys
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Iterable, Sequence, cast
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -69,16 +69,19 @@ def audit_test_modules(
 
             try:
                 module = importlib.import_module(module_name)
-                module_file = getattr(module, "__file__", None)
-                imported_path = Path(module_file).resolve() if module_file else None
+                module_file = cast(object, getattr(module, "__file__", None))
+                imported_path = Path(module_file).resolve() if isinstance(module_file, str) else None
                 if imported_path != path.resolve():
                     errors.append(f"import resolved to unexpected file: {imported_path}")
                 loader = unittest.TestLoader()
                 suite = loader.loadTestsFromModule(module, pattern=TEST_FILE_PATTERN)
                 discovered_count = suite.countTestCases()
-                for loader_error in loader.errors:
-                    lines = [line.strip() for line in loader_error.splitlines() if line.strip()]
-                    summary = lines[-1] if lines else "unknown loader error"
+                for loader_error in cast(Iterable[object], loader.errors):
+                    if isinstance(loader_error, str):
+                        lines = [line.strip() for line in loader_error.splitlines() if line.strip()]
+                        summary = lines[-1] if lines else "unknown loader error"
+                    else:
+                        summary = str(loader_error)
                     errors.append(f"unittest loader failed: {summary}")
             except unittest.SkipTest:
                 # Standard unittest discovery represents a skipped module as one
@@ -95,7 +98,12 @@ def audit_test_modules(
     return results
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+class _DiscoveryArgs(argparse.Namespace):
+    tests_dir: Path
+    package: str
+
+
+def parse_args(argv: Sequence[str] | None = None) -> _DiscoveryArgs:
     parser = argparse.ArgumentParser(
         description="Reject test modules that standard unittest discovery cannot collect.",
     )
@@ -110,7 +118,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="tests",
         help="Import package corresponding to --tests-dir.",
     )
-    return parser.parse_args(argv)
+    args = _DiscoveryArgs()
+    parser.parse_args(argv, namespace=args)
+    return args
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -8,16 +8,34 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Mapping
 
+from src.data_boundary import decode_json, is_object_list, is_string_object_mapping
 from src.installer_migration import MigrationError
 from src.installer_migration_entrypoint import (
     InstallerMigrationRequest,
     apply_installer_migration,
     build_installer_migration_plan,
 )
+from tests.typed_case import TypedTestCase
 
 
-class InstallerMigrationEntrypointTests(unittest.TestCase):
+def _mapping(value: object) -> Mapping[str, object]:
+    assert is_string_object_mapping(value)
+    return value
+
+
+def _list(value: object) -> list[object]:
+    assert is_object_list(value)
+    return value
+
+
+def _text(value: object) -> str:
+    assert isinstance(value, str)
+    return value
+
+
+class InstallerMigrationEntrypointTests(TypedTestCase):
     def _fixture(self, root: Path) -> tuple[Path, Path]:
         source = root / "legacy-bat-zip"
         destination = root / "installer"
@@ -31,17 +49,17 @@ class InstallerMigrationEntrypointTests(unittest.TestCase):
         (source / "setup.bat").write_text("legacy setup must never execute", encoding="utf-8")
         (source / "start.bat").write_text("legacy start must never execute", encoding="utf-8")
         (source / ".venv" / "Scripts" / "python.exe").write_bytes(b"old runtime")
+        runtime_config: dict[str, object] = {
+            "shared": {"device": "cuda", "compute_type": "float16", "language": "ja"},
+            "craig_pipeline": {"video_codec": "h264_nvenc"},
+        }
         (source / ".gui" / "runtime_config.json").write_text(
-            json.dumps(
-                {
-                    "shared": {"device": "cuda", "compute_type": "float16", "language": "ja"},
-                    "craig_pipeline": {"video_codec": "h264_nvenc"},
-                }
-            ),
+            json.dumps(runtime_config),
             encoding="utf-8",
         )
+        speaker_colors: dict[str, object] = {"speakers": {"speaker-a": "#12ABEF"}, "files": {}}
         (source / "assets" / "speaker_colors.json").write_text(
-            json.dumps({"speakers": {"speaker-a": "#12ABEF"}, "files": {}}),
+            json.dumps(speaker_colors),
             encoding="utf-8",
         )
         (source / "video_import" / "capture.mp4").write_bytes(b"media")
@@ -66,12 +84,16 @@ class InstallerMigrationEntrypointTests(unittest.TestCase):
             self.assertEqual(payload["schema_version"], 1)
             self.assertIn("settings", payload)
             self.assertIn("cleanup", payload)
-            self.assertIn(str(source / "video_import"), payload["workspace_references"])
-            self.assertIn(str(source / "video_export"), payload["workspace_references"])
+            references = _list(payload["workspace_references"])
+            self.assertIn(str(source / "video_import"), references)
+            self.assertIn(str(source / "video_export"), references)
+            settings = _mapping(payload["settings"])
+            items = _list(settings["items"])
             self.assertTrue(
                 any(
-                    "shared.device" in item["diff"] and "shared.compute_type" in item["diff"]
-                    for item in payload["settings"]["items"]
+                    "shared.device" in _list(_mapping(item)["diff"])
+                    and "shared.compute_type" in _list(_mapping(item)["diff"])
+                    for item in items
                 )
             )
             self.assertEqual((source / ".venv" / "Scripts" / "python.exe").read_bytes(), old_runtime)
@@ -92,23 +114,27 @@ class InstallerMigrationEntrypointTests(unittest.TestCase):
                 )
             )
             result = apply_installer_migration(plan)
-            config = json.loads((destination / ".gui" / "runtime_config.json").read_text(encoding="utf-8"))
-            self.assertEqual(config["shared"]["device"], "cpu")
-            self.assertEqual(config["shared"]["compute_type"], "int8")
-            self.assertEqual(config["craig_pipeline"]["video_codec"], "libx264")
+            config = _mapping(decode_json((destination / ".gui" / "runtime_config.json").read_text(encoding="utf-8")))
+            self.assertEqual(_mapping(config["shared"])["device"], "cpu")
+            self.assertEqual(_mapping(config["shared"])["compute_type"], "int8")
+            self.assertEqual(_mapping(config["craig_pipeline"])["video_codec"], "libx264")
+            colors = _mapping(decode_json((destination / "assets" / "speaker_colors.json").read_text(encoding="utf-8")))
             self.assertEqual(
-                json.loads((destination / "assets" / "speaker_colors.json").read_text(encoding="utf-8"))["speakers"]["speaker-a"],
+                _mapping(colors["speakers"])["speaker-a"],
                 "#12ABEF",
             )
-            registry = json.loads((destination / ".gui" / "legacy_workspaces.json").read_text(encoding="utf-8"))
-            self.assertEqual(registry["workspaces"][0]["path"], str(source.resolve()))
-            self.assertTrue(result["cleanup_candidates"])
-            self.assertTrue(all(entry["state"] == "removable_after_success" for entry in result["cleanup_candidates"]))
+            registry = _mapping(
+                decode_json((destination / ".gui" / "legacy_workspaces.json").read_text(encoding="utf-8"))
+            )
+            self.assertEqual(_mapping(_list(registry["workspaces"])[0])["path"], str(source.resolve()))
+            candidates = _list(result["cleanup_candidates"])
+            self.assertTrue(candidates)
+            self.assertTrue(all(_mapping(entry)["state"] == "removable_after_success" for entry in candidates))
             self.assertEqual((source / "video_import" / "capture.mp4").read_bytes(), media)
             self.assertEqual((source / "video_export" / "render.mp4").read_bytes(), output)
             self.assertTrue((source / ".venv").exists())
             self.assertFalse((destination / ".venv").exists())
-            self.assertTrue(Path(result["record_path"]).is_file())
+            self.assertTrue(Path(_text(result["record_path"])).is_file())
 
     def test_plan_rejects_source_directory_link_before_snapshot_walk(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -143,8 +169,9 @@ class InstallerMigrationEntrypointTests(unittest.TestCase):
                     InstallerMigrationRequest(source=str(source), destination=str(destination))
                 )
 
-    @unittest.skipUnless(os.name == "nt", "Windows junction verification is Windows-only")
     def test_plan_rejects_windows_junction_before_snapshot_walk(self) -> None:
+        if os.name != "nt":
+            self.skipTest("Windows junction verification is Windows-only")
         with tempfile.TemporaryDirectory() as temporary:
             source, destination = self._fixture(Path(temporary))
             external = Path(temporary) / "external-junction-target"
@@ -191,7 +218,8 @@ class InstallerMigrationEntrypointTests(unittest.TestCase):
             source, destination = self._fixture(Path(temporary))
             existing = destination / ".gui" / "runtime_config.json"
             existing.parent.mkdir(parents=True)
-            existing.write_text(json.dumps({"shared": {"language": "keep"}}), encoding="utf-8")
+            existing_config: dict[str, object] = {"shared": {"language": "keep"}}
+            existing.write_text(json.dumps(existing_config), encoding="utf-8")
             request = InstallerMigrationRequest(
                 source=str(source),
                 destination=str(destination),
@@ -203,7 +231,8 @@ class InstallerMigrationEntrypointTests(unittest.TestCase):
             self.assertEqual(config_item.reason, "confirmation_required")
             with self.assertRaisesRegex(ValueError, "confirmation"):
                 apply_installer_migration(plan)
-            self.assertEqual(json.loads(existing.read_text(encoding="utf-8"))["shared"]["language"], "keep")
+            config = _mapping(decode_json(existing.read_text(encoding="utf-8")))
+            self.assertEqual(_mapping(config["shared"])["language"], "keep")
 
     def test_invalid_registry_is_rejected_before_settings_are_applied(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -240,9 +269,9 @@ class InstallerMigrationEntrypointTests(unittest.TestCase):
                     0,
                 )
             self.assertTrue(plan_path.is_file())
-            decoded = json.loads(plan_path.read_text(encoding="utf-8"))
+            decoded = _mapping(decode_json(plan_path.read_text(encoding="utf-8")))
             self.assertIn("cleanup", decoded)
-            self.assertRegex(decoded["plan_sha256"], r"^[0-9a-f]{64}$")
+            self.assertRegex(_text(decoded["plan_sha256"]), r"^[0-9a-f]{64}$")
             self.assertNotIn("#12ABEF", output.getvalue())
             self.assertIn('"cuda": false', output.getvalue())
 
@@ -302,8 +331,12 @@ class InstallerMigrationEntrypointTests(unittest.TestCase):
                     0,
                 )
 
-            runtime_config = json.loads((source / ".gui" / "runtime_config.json").read_text(encoding="utf-8"))
-            runtime_config["shared"]["language"] = "en"
+            runtime_config = dict(
+                _mapping(decode_json((source / ".gui" / "runtime_config.json").read_text(encoding="utf-8")))
+            )
+            shared = dict(_mapping(runtime_config["shared"]))
+            shared["language"] = "en"
+            runtime_config["shared"] = shared
             (source / ".gui" / "runtime_config.json").write_text(
                 json.dumps(runtime_config),
                 encoding="utf-8",
@@ -338,29 +371,24 @@ class InstallerMigrationEntrypointTests(unittest.TestCase):
             registry = destination / ".gui" / "legacy_workspaces.json"
             registry.parent.mkdir(parents=True)
             existing = Path(temporary) / "already-registered"
-            registry.write_text(
-                json.dumps(
-                    {
-                        "schema_version": 1,
-                        "workspaces": [
-                            {"path": str(existing), "resources": [str(existing / "project")]},
-                        ],
-                    }
-                ),
-                encoding="utf-8",
-            )
+            initial_registry: dict[str, object] = {
+                "schema_version": 1,
+                "workspaces": [{"path": str(existing), "resources": [str(existing / "project")]}],
+            }
+            registry.write_text(json.dumps(initial_registry), encoding="utf-8")
             plan = build_installer_migration_plan(
                 InstallerMigrationRequest(source=str(source), destination=str(destination))
             )
             apply_installer_migration(plan)
             apply_installer_migration(build_installer_migration_plan(plan.request))
-            merged = json.loads(registry.read_text(encoding="utf-8"))
+            merged = _mapping(decode_json(registry.read_text(encoding="utf-8")))
+            workspaces = [_mapping(entry) for entry in _list(merged["workspaces"])]
             self.assertEqual(
-                {entry["path"] for entry in merged["workspaces"]},
+                {entry["path"] for entry in workspaces},
                 {str(existing.resolve()), str(source.resolve())},
             )
             self.assertEqual(
-                len([entry for entry in merged["workspaces"] if entry["path"] == str(source.resolve())]),
+                len([entry for entry in workspaces if entry["path"] == str(source.resolve())]),
                 1,
             )
 

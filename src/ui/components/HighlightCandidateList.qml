@@ -11,7 +11,7 @@ ColumnLayout {
     signal previewRequested(real seconds, real endSeconds)
 
     function visibleCandidates() {
-        var candidates = appBackend ? appBackend.highlightCandidates : []
+        var candidates = appBackend ? appBackend.shortVideo.highlightCandidates : []
         var filtered = []
         for (var index = 0; index < candidates.length; ++index) {
             if (candidateRoot.categoryFilter === "all" || candidates[index].category === candidateRoot.categoryFilter) {
@@ -49,13 +49,16 @@ ColumnLayout {
         return labels[String(value || "")] || "状態を確認中"
     }
 
-    RowLayout {
+    GridLayout {
+        columns: 2
         Layout.fillWidth: true
         Text { text: "見どころ候補"; color: "#F0F6FC"; font.family: "Yu Gothic UI"; font.pixelSize: 12; font.weight: Font.Bold }
-        Text { Layout.fillWidth: true; text: appBackend ? Math.round(appBackend.highlightAnalysisProgress * 100) + "%" : ""; color: "#8B949E"; font.pixelSize: 9 }
-        ComboBox { objectName: "highlightSortCombo"; model: ["おすすめ順", "時間順"]; onActivated: candidateRoot.sortMode = currentIndex }
+        Text { Layout.fillWidth: true; text: appBackend ? Math.round(appBackend.shortVideo.highlightAnalysisProgress * 100) + "%" : ""; color: "#8B949E"; font.pixelSize: 9 }
+        ComboBox { Layout.fillWidth: true; Layout.minimumWidth: 0; objectName: "highlightSortCombo"; model: ["おすすめ順", "時間順"]; onActivated: candidateRoot.sortMode = currentIndex }
         ComboBox {
             objectName: "highlightCategoryCombo"
+            Layout.fillWidth: true
+            Layout.minimumWidth: 0
             model: [
                 { "label": "すべて", "value": "all" },
                 { "label": "会話", "value": "conversation" },
@@ -67,24 +70,26 @@ ColumnLayout {
         }
         Button {
             objectName: "highlightAnalyzeButton"
-            text: appBackend && appBackend.highlightAnalysisState === "running" ? "探しています..." : "見どころを探す"
-            enabled: appBackend && !appBackend.running && ["running", "cancelling"].indexOf(appBackend.highlightAnalysisState) < 0 && !appBackend.running
-            onClicked: appBackend.startHighlightAnalysis()
+            Layout.fillWidth: true
+            text: appBackend && appBackend.shortVideo.highlightAnalysisState === "running" ? "探しています..." : "見どころを探す"
+            enabled: appBackend && ["running", "cancelling"].indexOf(appBackend.shortVideo.highlightAnalysisState) < 0 && !appBackend.running
+            onClicked: appBackend.shortVideo.startHighlightAnalysis()
         }
         Button {
             objectName: "highlightCancelButton"
+            Layout.fillWidth: true
             text: "キャンセル"
-            enabled: appBackend && appBackend.highlightAnalysisState === "running"
-            onClicked: appBackend.cancelHighlightAnalysis()
+            enabled: appBackend && appBackend.shortVideo.highlightAnalysisState === "running"
+            onClicked: appBackend.shortVideo.cancelHighlightAnalysis()
         }
     }
 
     RowLayout {
         Layout.fillWidth: true
-        Text { text: candidateRoot.analysisStateLabel(appBackend ? appBackend.highlightAnalysisState : "idle"); color: "#8B949E"; font.pixelSize: 9 }
+        Text { text: candidateRoot.analysisStateLabel(appBackend ? appBackend.shortVideo.highlightAnalysisState : "idle"); color: "#8B949E"; font.pixelSize: 9 }
         Item { Layout.fillWidth: true }
-        Button { objectName: "highlightRetryButton"; text: "もう一度探す"; enabled: appBackend && !appBackend.running && ["running", "cancelling"].indexOf(appBackend.highlightAnalysisState) < 0; onClicked: appBackend.retryHighlightAnalysis() }
-        Button { objectName: "highlightUndoRejectButton"; text: "外した候補を戻す"; enabled: appBackend && appBackend.highlightUndoAvailable && !appBackend.running; onClicked: appBackend.undoHighlightRejection() }
+        Button { objectName: "highlightRetryButton"; text: "もう一度探す"; enabled: appBackend && !appBackend.running && ["running", "cancelling"].indexOf(appBackend.shortVideo.highlightAnalysisState) < 0; onClicked: appBackend.shortVideo.retryHighlightAnalysis() }
+        Button { objectName: "highlightUndoRejectButton"; text: "外した候補を戻す"; enabled: appBackend && appBackend.shortVideo.highlightUndoAvailable && !appBackend.running; onClicked: appBackend.shortVideo.undoHighlightRejection() }
     }
 
     ListView {
@@ -100,25 +105,36 @@ ColumnLayout {
             required property var modelData
             required property int index
             width: candidateListView.width
-            height: 76
+            height: 112
             radius: 7
             color: "#161B22"
             border.color: "#30363D"
-            RowLayout {
+            GridLayout {
+                columns: 3
                 anchors.fill: parent
                 anchors.margins: 6
-                spacing: 6
+                columnSpacing: 6
+                rowSpacing: 6
                 ColumnLayout {
+                    Layout.columnSpan: 3
+                    Layout.minimumWidth: 0
                     Layout.fillWidth: true
                     Text { Layout.fillWidth: true; text: (modelData.start || 0).toFixed(2) + " - " + (modelData.end || 0).toFixed(2) + "  " + candidateRoot.categoryLabel(modelData.category); color: "#6366F1"; font.family: "Cascadia Mono"; font.pixelSize: 9 }
                     Text { Layout.fillWidth: true; text: modelData.subtitle_excerpt || ""; color: "#F0F6FC"; elide: Text.ElideRight; font.pixelSize: 10 }
                     Text { Layout.fillWidth: true; text: modelData.reason || "この区間は見どころ候補です"; color: "#8B949E"; elide: Text.ElideRight; font.pixelSize: 8 }
                 }
-                Button { objectName: "highlightPreviewButton"; text: "再生"; onClicked: candidateRoot.previewRequested(Number(modelData.start || 0), Number(modelData.end || modelData.start || 0)) }
-                Button { objectName: "highlightAddButton"; enabled: appBackend && !appBackend.running; text: "ショートに追加"; onClicked: appBackend.addHighlightCandidate(modelData.source_index) }
-                Button { objectName: "highlightRejectButton"; enabled: appBackend && !appBackend.running; text: "候補から外す"; onClicked: appBackend.rejectHighlightCandidate(modelData.source_index) }
+                Button { Layout.fillWidth: true; Layout.minimumWidth: 0; objectName: "highlightPreviewButton"; text: "再生"; onClicked: candidateRoot.previewRequested(Number(modelData.start || 0), Number(modelData.end || modelData.start || 0)) }
+                Button {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    objectName: "highlightAddButton"
+                    text: "ショートに追加"
+                    enabled: appBackend && !appBackend.running
+                        && (!modelData.id || appBackend.shortVideo.addedHighlightCandidateIds.indexOf(String(modelData.id)) < 0)
+                    onClicked: appBackend.shortVideo.addHighlightCandidate(modelData.source_index)
+                }
+                Button { Layout.fillWidth: true; Layout.minimumWidth: 0; objectName: "highlightRejectButton"; text: "候補から外す"; enabled: appBackend && !appBackend.running; onClicked: appBackend.shortVideo.rejectHighlightCandidate(modelData.source_index) }
             }
         }
     }
 }
-

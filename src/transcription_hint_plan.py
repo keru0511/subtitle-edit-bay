@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Mapping
 
+from .transcription_profile import DEFAULT_VAD_ONSET, DEFAULT_VAD_OFFSET
 from .craig_transcription_execution import CraigTranscriptionHint
 from .transcript_cache import build_transcript_cache_fingerprint, stable_payload_hash
 from .transcription_context import TranscriptionContext
@@ -15,12 +16,12 @@ class TranscriptionAsrSettings:
     model: str = "large-v3"
     device: str = "cpu"
     compute_type: str = "int8"
-    language: str = "ja"
-    vad_onset: float | None = 0.35
-    vad_offset: float | None = 0.2
+    language: str | None = "ja"
+    vad_onset: float | None = DEFAULT_VAD_ONSET
+    vad_offset: float | None = DEFAULT_VAD_OFFSET
     whisperx_version: str = ""
 
-    def to_cache_settings(self) -> dict[str, Any]:
+    def to_cache_settings(self) -> dict[str, object]:
         return {
             "model": self.model,
             "device": self.device,
@@ -38,7 +39,7 @@ class CraigTranscriptionHintPlan:
     transcription_hints: TranscriptionHints
     dictionary_hash: str
     cache_fingerprint: str
-    cache_settings: Mapping[str, Any]
+    cache_settings: Mapping[str, object]
 
 
 def confirmed_dictionary_hash(
@@ -78,7 +79,7 @@ def build_craig_transcription_hint_plan(
         game_title=context.game_title,
         whisperx_version=settings.whisperx_version,
     )
-    cache_settings: dict[str, Any] = {
+    cache_settings: dict[str, object] = {
         "asr": settings.to_cache_settings(),
         "transcription_context": context.to_dict(),
         "dictionary_hash": dictionary_hash,

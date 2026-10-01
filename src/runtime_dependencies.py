@@ -6,9 +6,41 @@ import json
 import shutil
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Protocol, cast
+
+from .data_boundary import decode_json, is_object_dict
+
+
+class _TorchVersion(Protocol):
+    cuda: str | None
+
+
+class _TorchCuda(Protocol):
+    def is_available(self) -> bool: ...
+
+    def get_device_name(self, index: int) -> str: ...
+
+
+class _TorchModule(Protocol):
+    __version__: str
+    version: _TorchVersion
+    cuda: _TorchCuda
+
+
+def _optional_torch() -> _TorchModule | None:
+    if importlib.util.find_spec("torch") is None:
+        return None
+    try:
+        return cast(_TorchModule, importlib.import_module("torch"))
+    except (ImportError, OSError):
+        return None
+
+
+def _creation_flags() -> int:
+    value: object = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return value if isinstance(value, int) else 0
 
 
 @dataclass(frozen=True)
@@ -33,11 +65,16 @@ class RuntimeDependencyStatus:
             missing.append("whisperx")
         return missing
 
-    def to_dict(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["ready"] = self.ready
-        payload["missing"] = self.missing()
-        return payload
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "ffmpeg": self.ffmpeg,
+            "ffprobe": self.ffprobe,
+            "whisperx": self.whisperx,
+            "cuda": self.cuda,
+            "nvenc": self.nvenc,
+            "ready": self.ready,
+            "missing": self.missing(),
+        }
 
 
 def check_runtime_dependencies(*, probe_nvenc: bool = False) -> RuntimeDependencyStatus:
@@ -62,16 +99,13 @@ def runtime_diagnostic_info(project_root: Path | None = None) -> dict[str, objec
     }
     manifest_path = (project_root or Path(__file__).resolve().parents[1]) / ".local" / "runtime-manifest.json"
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if isinstance(manifest, dict):
+        manifest = decode_json(manifest_path.read_text(encoding="utf-8"))
+        if is_object_dict(manifest):
             info["runtime_manifest"] = manifest
     except (OSError, json.JSONDecodeError):
         pass
-    if importlib.util.find_spec("torch") is None:
-        return info
-    try:
-        import torch
-    except (ImportError, OSError):
+    torch = _optional_torch()
+    if torch is None:
         return info
 
     info["pytorch"] = str(torch.__version__)
@@ -106,7 +140,7 @@ def _ffmpeg_version(ffmpeg_path: str | None) -> str:
             errors="replace",
             check=False,
             timeout=5,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            creationflags=_creation_flags(),
         )
     except (OSError, subprocess.SubprocessError):
         return "unavailable"
@@ -143,7 +177,7 @@ def _ffmpeg_nvenc_available(ffmpeg_path: str | None) -> bool:
             stderr=subprocess.DEVNULL,
             check=False,
             timeout=8,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            creationflags=_creation_flags(),
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -151,11 +185,8 @@ def _ffmpeg_nvenc_available(ffmpeg_path: str | None) -> bool:
 
 
 def _torch_cuda_available() -> bool:
-    if importlib.util.find_spec("torch") is None:
-        return False
-    try:
-        import torch
-    except (ImportError, OSError):
+    torch = _optional_torch()
+    if torch is None:
         return False
     return bool(torch.cuda.is_available())
 

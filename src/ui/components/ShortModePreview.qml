@@ -17,7 +17,7 @@ Rectangle {
     property real candidatePreviewEndSeconds: -1
     property string fallbackBackgroundColor: "#000000"
     property string activeClipKey: ""
-    readonly property var shortSettings: appBackend ? appBackend.shortVideoSettings : ({})
+    readonly property var shortSettings: appBackend ? appBackend.shortVideo.shortVideoSettings : ({})
     readonly property var appSettings: appBackend ? appBackend.settings : ({})
     readonly property string previewSource: appBackend ? appBackend.previewUrl : ""
 
@@ -132,13 +132,13 @@ Rectangle {
         anchors.fill: previewVideo
         appBackend: previewRoot.appBackend
         player: previewPlayer
-        layoutMetrics: previewRoot.appBackend ? previewRoot.appBackend.subtitleLayoutMetrics : ({})
+        layoutMetrics: previewRoot.appBackend ? previewRoot.appBackend.subtitles.subtitleLayoutMetrics : ({})
         captionObjectPrefix: "shortSubtitleOverlayCaption"
         baseFontSize: previewRoot.subtitleBaseFontSize
         defaultSubtitleFontSize: 50
         outlineColor: previewRoot.subtitleOutlineColor
         outlineThickness: previewRoot.subtitleOutlineThickness
-        speakerColors: previewRoot.appBackend ? previewRoot.appBackend.projectSpeakers : []
+        speakerColors: previewRoot.appBackend ? previewRoot.appBackend.subtitles.projectSpeakers : []
     }
 
     Text {

@@ -12,8 +12,31 @@ permissions:
   contents: read
 
 jobs:
+  classify:
+    name: Classify CodeQL impact
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      codeql: ${{ steps.impact.outputs.codeql }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Plan analysis by changed paths
+        id: impact
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: >-
+          python scripts/ci_impact.py
+          --base-sha "$BASE_SHA"
+          --source-sha "${{ github.sha }}"
+          --event-name "${{ github.event_name }}"
+          --github-output "$GITHUB_OUTPUT"
   analyze:
     name: Analyze Python
+    needs: classify
+    if: needs.classify.outputs.codeql == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -9,8 +9,9 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Protocol, Sequence, TypeGuard, cast
 
 
 CONTRACT_PATH = Path("runtime/runtime-contract.json")
@@ -18,21 +19,62 @@ LOCK_REQUIREMENT = re.compile(r"^([A-Za-z0-9_.-]+)==([^ ;\\]+)")
 VERSION_PREFIX = re.compile(r"^(?:ffmpeg|ffprobe) version (\d+)(?:\.|\s)")
 
 
+def is_string_object_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
+    """セットアップ前にも単独で実行できるようJSON境界をこのスクリプト内で検証する。"""
+    return isinstance(value, Mapping) and all(isinstance(key, str) for key in value)
+
+
+def is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
+def decode_json(text: str) -> object:
+    payload: object = json.loads(text)
+    return payload
+
+
 class RuntimeContractError(ValueError):
     """Raised when a release runtime contract is incomplete or violated."""
+
+
+def _mapping(value: object, label: str) -> Mapping[str, object]:
+    if not is_string_object_mapping(value):
+        raise RuntimeContractError(f"{label} must be an object")
+    return value
+
+
+def _string(value: object, label: str) -> str:
+    if not isinstance(value, str):
+        raise RuntimeContractError(f"{label} must be a string")
+    return value
+
+
+def _integer(value: object, label: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise RuntimeContractError(f"{label} must be an integer")
+    return value
+
+
+def _string_list(value: object, label: str) -> list[str]:
+    if not is_object_list(value):
+        raise RuntimeContractError(f"{label} must be a string list")
+    result: list[str] = []
+    for item in value:
+        result.append(_string(item, label))
+    return result
 
 
 def _normalized_name(value: str) -> str:
     return re.sub(r"[-_.]+", "-", value).lower()
 
 
-def load_contract(root: Path) -> dict[str, Any]:
+def load_contract(root: Path) -> Mapping[str, object]:
     path = root / CONTRACT_PATH
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = decode_json(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise RuntimeContractError(f"could not read runtime contract {path}: {error}") from error
-    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+    if not is_string_object_mapping(payload) or payload.get("schema_version") != 1:
         raise RuntimeContractError("runtime contract schema_version must be 1")
     return payload
 
@@ -68,11 +110,11 @@ def lock_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _profile(contract: Mapping[str, Any], name: str) -> Mapping[str, Any]:
+def _profile(contract: Mapping[str, object], name: str) -> Mapping[str, object]:
     profiles = contract.get("profiles")
-    if not isinstance(profiles, dict) or not isinstance(profiles.get(name), dict):
+    if not is_string_object_mapping(profiles) or not is_string_object_mapping(profiles.get(name)):
         raise RuntimeContractError(f"unknown runtime profile: {name}")
-    return profiles[name]
+    return _mapping(profiles[name], f"runtime profile {name}")
 
 
 def validate_contract(root: Path) -> dict[str, dict[str, str]]:
@@ -80,13 +122,13 @@ def validate_contract(root: Path) -> dict[str, dict[str, str]]:
     python = contract.get("python")
     ffmpeg = contract.get("ffmpeg")
     imports = contract.get("critical_imports")
-    if not isinstance(python, dict) or python.get("major_minor") != "3.10":
+    if not is_string_object_mapping(python) or python.get("major_minor") != "3.10":
         raise RuntimeContractError("runtime contract must define the Python 3.10 policy")
-    if not isinstance(ffmpeg, dict) or not all(
+    if not is_string_object_mapping(ffmpeg) or not all(
         isinstance(ffmpeg.get(key), int) for key in ("minimum_major", "maximum_major_exclusive")
     ):
         raise RuntimeContractError("runtime contract must define the FFmpeg supported major range")
-    if not isinstance(imports, list) or not imports or not all(isinstance(value, str) and value for value in imports):
+    if not is_object_list(imports) or not imports or not all(isinstance(value, str) and value for value in imports):
         raise RuntimeContractError("runtime contract critical_imports must be a non-empty string list")
 
     resolved: dict[str, dict[str, str]] = {}
@@ -110,21 +152,22 @@ def _version_tuple(value: str) -> tuple[int, ...]:
     match = re.match(r"^(\d+(?:\.\d+)*)", value)
     if not match:
         raise RuntimeContractError(f"invalid version: {value!r}")
-    return tuple(int(part) for part in match.group(1).split("."))
+    matched: object = match.group(1)
+    assert isinstance(matched, str)
+    return tuple(int(part) for part in matched.split("."))
 
 
-def verify_python(contract: Mapping[str, Any]) -> None:
-    policy = contract["python"]
-    actual = sys.version_info[:3]
-    if not (_version_tuple(policy["minimum"]) <= actual < _version_tuple(policy["maximum_exclusive"])):
-        raise RuntimeContractError(
-            f"Python {'.'.join(map(str, actual))} is outside "
-            f"[{policy['minimum']}, {policy['maximum_exclusive']})"
-        )
+def verify_python(contract: Mapping[str, object]) -> None:
+    policy = _mapping(contract.get("python"), "Python runtime policy")
+    minimum = _string(policy.get("minimum"), "Python minimum version")
+    maximum = _string(policy.get("maximum_exclusive"), "Python maximum version")
+    actual = (sys.version_info.major, sys.version_info.minor, sys.version_info.micro)
+    if not (_version_tuple(minimum) <= actual < _version_tuple(maximum)):
+        raise RuntimeContractError(f"Python {'.'.join(map(str, actual))} is outside [{minimum}, {maximum})")
 
 
-def verify_tools(contract: Mapping[str, Any]) -> dict[str, str]:
-    policy = contract["ffmpeg"]
+def verify_tools(contract: Mapping[str, object]) -> dict[str, str]:
+    policy = _mapping(contract.get("ffmpeg"), "FFmpeg runtime policy")
     versions = {name: _tool_version(name, policy) for name in ("ffmpeg", "ffprobe")}
     with tempfile.TemporaryDirectory(prefix="subtitle-edit-bay-runtime-probe-") as temp_dir:
         fixture = Path(temp_dir) / "probe.mkv"
@@ -168,15 +211,15 @@ def verify_tools(contract: Mapping[str, Any]) -> dict[str, str]:
                     f"media capability probe failed for {command[0]}: {(result.stderr or '').strip()}"
                 )
         try:
-            probe = json.loads(result.stdout)
+            probe = decode_json(result.stdout)
         except json.JSONDecodeError as error:
             raise RuntimeContractError("ffprobe capability result was not valid JSON") from error
-        if not isinstance(probe, dict) or not probe.get("streams"):
+        if not is_string_object_mapping(probe) or not probe.get("streams"):
             raise RuntimeContractError("ffprobe capability probe found no video stream")
     return versions
 
 
-def _tool_version(name: str, policy: Mapping[str, Any]) -> str:
+def _tool_version(name: str, policy: Mapping[str, object]) -> str:
     try:
         result = subprocess.run(
             [name, "-version"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10
@@ -190,22 +233,43 @@ def _tool_version(name: str, policy: Mapping[str, Any]) -> str:
     if not match:
         raise RuntimeContractError(f"could not parse {name} version: {first_line[0]!r}")
     major = int(match.group(1))
-    if not int(policy["minimum_major"]) <= major < int(policy["maximum_major_exclusive"]):
+    minimum_major = _integer(policy.get("minimum_major"), "FFmpeg minimum major")
+    maximum_major = _integer(policy.get("maximum_major_exclusive"), "FFmpeg maximum major")
+    if not minimum_major <= major < maximum_major:
         raise RuntimeContractError(f"{name} major version {major} is outside the supported range")
     return first_line[0]
 
 
-def verify_runtime(root: Path, profile_name: str, manifest_output: Path) -> dict[str, Any]:
+class _TorchVersion(Protocol):
+    cuda: str | None
+
+
+class _TorchCuda(Protocol):
+    def is_available(self) -> bool: ...
+
+    def get_device_name(self, index: int) -> str: ...
+
+
+class _TorchRuntime(Protocol):
+    __version__: str
+    cuda: _TorchCuda
+    version: _TorchVersion
+
+
+def verify_runtime(root: Path, profile_name: str, manifest_output: Path) -> dict[str, object]:
     contract = load_contract(root)
     locked_profiles = validate_contract(root)
     profile = _profile(contract, profile_name)
     verify_python(contract)
-    lock_path = root / str(profile["lock_file"])
-    installed = {
-        _normalized_name(distribution.metadata["Name"]): distribution.version
-        for distribution in importlib.metadata.distributions()
-        if distribution.metadata.get("Name")
-    }
+    lock_path = root / _string(profile.get("lock_file"), "runtime profile lock_file")
+    installed: dict[str, str] = {}
+    for distribution in importlib.metadata.distributions():
+        try:
+            name = distribution.metadata["Name"]
+        except KeyError:
+            continue
+        if name:
+            installed[_normalized_name(name)] = distribution.version
     mismatches = [
         f"{name}: expected {version}, got {installed.get(name, 'not installed')}"
         for name, version in sorted(locked_profiles[profile_name].items())
@@ -215,26 +279,24 @@ def verify_runtime(root: Path, profile_name: str, manifest_output: Path) -> dict
         raise RuntimeContractError("installed packages do not match the runtime lock:\n- " + "\n- ".join(mismatches))
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
-    for module_name in contract["critical_imports"]:
+    for module_name in _string_list(contract.get("critical_imports"), "runtime critical_imports"):
         try:
             importlib.import_module(module_name)
         except (ImportError, OSError, RuntimeError) as error:
             raise RuntimeContractError(f"critical import failed for {module_name}: {error}") from error
 
-    import torch
-
+    torch_module: object = importlib.import_module("torch")
+    torch = cast(_TorchRuntime, torch_module)
     cuda_available = bool(torch.cuda.is_available())
     if profile_name == "cu128" and not cuda_available:
         raise RuntimeContractError("cu128 profile is installed but torch.cuda.is_available() is false")
     tool_versions = verify_tools(contract)
-    manifest = {
+    manifest: dict[str, object] = {
         "schema_version": 1,
         "app_version": (
-            (root / "VERSION").read_text(encoding="utf-8").strip()
-            if (root / "VERSION").is_file()
-            else "development"
+            (root / "VERSION").read_text(encoding="utf-8").strip() if (root / "VERSION").is_file() else "development"
         ),
-        "setup_schema_version": contract["setup_schema_version"],
+        "setup_schema_version": _integer(contract.get("setup_schema_version"), "setup_schema_version"),
         "profile": profile_name,
         "python_version": sys.version.split()[0],
         "packages": dict(sorted(installed.items())),
@@ -245,7 +307,7 @@ def verify_runtime(root: Path, profile_name: str, manifest_output: Path) -> dict
         "ffmpeg_version": tool_versions["ffmpeg"],
         "ffprobe_version": tool_versions["ffprobe"],
         "media_capability_probe": "passed",
-        "lock_file": str(profile["lock_file"]),
+        "lock_file": _string(profile.get("lock_file"), "runtime profile lock_file"),
         "lock_sha256": lock_sha256(lock_path),
     }
     manifest_output.parent.mkdir(parents=True, exist_ok=True)
@@ -253,13 +315,22 @@ def verify_runtime(root: Path, profile_name: str, manifest_output: Path) -> dict
     return manifest
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+class RuntimeArguments(argparse.Namespace):
+    command: str
+    root: Path
+    profile: str = "cpu"
+    manifest_output: Path | None = None
+
+
+def parse_args(argv: Sequence[str] | None = None) -> RuntimeArguments:
     parser = argparse.ArgumentParser(description="Validate and verify a release runtime contract.")
     parser.add_argument("command", choices=("validate", "verify-python", "verify-tools", "verify-runtime"))
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--profile", choices=("cpu", "cu128"), default="cpu")
     parser.add_argument("--manifest-output", type=Path)
-    return parser.parse_args(argv)
+    args = RuntimeArguments()
+    parser.parse_args(argv, namespace=args)
+    return args
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -268,16 +339,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "validate":
             profiles = validate_contract(root)
-            print(json.dumps({name: len(packages) for name, packages in profiles.items()}, sort_keys=True))
+            counts: dict[str, int] = {name: len(packages) for name, packages in profiles.items()}
+            print(json.dumps(counts, sort_keys=True))
         elif args.command == "verify-python":
             verify_python(load_contract(root))
             print(sys.version.split()[0])
         elif args.command == "verify-tools":
             print(json.dumps(verify_tools(load_contract(root)), sort_keys=True))
         else:
-            if args.manifest_output is None:
+            manifest_output = args.manifest_output
+            if manifest_output is None:
                 raise RuntimeContractError("--manifest-output is required for verify-runtime")
-            print(json.dumps(verify_runtime(root, args.profile, args.manifest_output), ensure_ascii=False))
+            print(json.dumps(verify_runtime(root, args.profile, manifest_output), ensure_ascii=False))
     except RuntimeContractError as error:
         print(f"runtime contract error: {error}", file=sys.stderr)
         return 2

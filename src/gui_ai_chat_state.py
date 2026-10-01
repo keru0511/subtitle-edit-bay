@@ -10,12 +10,38 @@ from __future__ import annotations
 
 import threading
 from dataclasses import replace
-from typing import Any, Callable, Mapping
+from typing import Callable, Mapping, Protocol
 
-from .gui_codex_chat_state import CodexChatController, CodexChatSnapshot
+from .gui_codex_chat_state import CodexChatSnapshot
 
 
 ProviderStateCallback = Callable[[CodexChatSnapshot], None]
+
+
+class ChatController(Protocol):
+    """Provider router が使うチャット制御の最小契約。"""
+
+    @property
+    def snapshot(self) -> CodexChatSnapshot: ...
+
+    def connect(self) -> None: ...
+    def reconnect(self) -> None: ...
+    def login(self, *, relogin: bool = False) -> None: ...
+    def logout(self) -> None: ...
+    def select_model(self, model: str) -> None: ...
+    def send_message(self, text: str) -> bool: ...
+    def begin_proposal(
+        self,
+        text: str,
+        *,
+        content_type: str = "subtitle_proposal",
+        pending_text: str = "",
+    ) -> bool: ...
+    def complete_proposal(self, summary: str) -> None: ...
+    def fail_proposal(self, message: str, *, cancelled: bool = False) -> None: ...
+    def interrupt(self) -> None: ...
+    def new_chat(self) -> None: ...
+    def shutdown(self) -> None: ...
 
 
 class AIProviderChatRouter:
@@ -23,7 +49,7 @@ class AIProviderChatRouter:
 
     def __init__(
         self,
-        controllers: Mapping[str, CodexChatController],
+        controllers: Mapping[str, ChatController],
         *,
         preferred_provider: str = "codex",
         on_state: ProviderStateCallback | None = None,
@@ -56,7 +82,7 @@ class AIProviderChatRouter:
         return self.snapshot.provider_name
 
     @property
-    def active_controller(self) -> CodexChatController:
+    def active_controller(self) -> ChatController:
         with self._lock:
             return self._controllers[self._active_provider_id]
 
@@ -71,10 +97,10 @@ class AIProviderChatRouter:
         return snapshot
 
     @property
-    def controllers(self) -> Mapping[str, CodexChatController]:
+    def controllers(self) -> Mapping[str, ChatController]:
         return dict(self._controllers)
 
-    def controller(self, provider_id: str) -> CodexChatController | None:
+    def controller(self, provider_id: str) -> ChatController | None:
         return self._controllers.get(str(provider_id).strip())
 
     def connect(self) -> None:
@@ -105,8 +131,8 @@ class AIProviderChatRouter:
     def select_model(self, model_id: str) -> None:
         self.active_controller.select_model(model_id)
 
-    def send_message(self, text: str) -> None:
-        self.active_controller.send_message(text)
+    def send_message(self, text: str) -> bool:
+        return self.active_controller.send_message(text)
 
     def begin_proposal(
         self,
@@ -173,7 +199,7 @@ class AIProviderChatRouter:
         self._notify_state()
         return True
 
-    def available_providers(self) -> list[dict[str, Any]]:
+    def available_providers(self) -> list[dict[str, object]]:
         """Return only providers whose current runtime is usable.
 
         A provider in ``error`` is intentionally omitted.  ``connecting`` and
@@ -181,7 +207,7 @@ class AIProviderChatRouter:
         provider's own reconnect/login action.
         """
 
-        result: list[dict[str, Any]] = []
+        result: list[dict[str, object]] = []
         active = self.active_provider_id
         for provider_id in self._provider_order:
             snapshot = self._controllers[provider_id].snapshot
@@ -190,7 +216,7 @@ class AIProviderChatRouter:
             result.append(_provider_mapping(provider_id, snapshot, provider_id == active))
         return result
 
-    def provider_states(self) -> list[dict[str, Any]]:
+    def provider_states(self) -> list[dict[str, object]]:
         """Return all provider states for diagnostics/tests, including errors."""
 
         active = self.active_provider_id
@@ -231,7 +257,7 @@ def _provider_mapping(
     provider_id: str,
     snapshot: CodexChatSnapshot,
     selected: bool,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     return {
         "id": provider_id,
         "label": snapshot.provider_name,

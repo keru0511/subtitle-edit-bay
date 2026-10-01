@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from tests.typed_case import TypedTestCase
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -9,7 +10,7 @@ UI_ROOT = REPOSITORY_ROOT / "src" / "ui"
 WORKFLOW_QML = UI_ROOT / "screens" / "MainWorkflowScreen.qml"
 
 
-class WorkspaceContractTests(unittest.TestCase):
+class WorkspaceContractTests(TypedTestCase):
     def test_qml_has_no_local_workspace_compatibility_mirror(self) -> None:
         qml_files = sorted(UI_ROOT.rglob("*.qml"))
         forbidden_markers = (
@@ -31,17 +32,17 @@ class WorkspaceContractTests(unittest.TestCase):
 
         self.assertIn(
             'readonly property bool shortWorkspaceActive: root.appBackend\n'
-            '        && root.appBackend.currentWorkspace === "short-artifact"',
+            '        && root.appBackend.workspace.currentWorkspace === "short-artifact"',
             workflow,
         )
-        self.assertIn('root.appBackend.switchWorkspace("short-artifact")', workflow)
-        self.assertIn('root.appBackend.switchWorkspace("normal-video")', workflow)
+        self.assertIn('root.appBackend.workspace.switchWorkspace("short-artifact")', workflow)
+        self.assertIn('root.appBackend.workspace.switchWorkspace("normal-video")', workflow)
         self.assertIn(
-            'var nextWorkspace = String(root.appBackend.currentWorkspace || "normal-video")',
+            'var nextWorkspace = String(root.appBackend.workspace.currentWorkspace || "normal-video")',
             workflow,
         )
         self.assertIn("function onWorkspaceChanged()", workflow)
-        self.assertIn("var playerState = root.appBackend.workspacePlayerState", workflow)
+        self.assertIn("var playerState = root.appBackend.workspace.workspacePlayerState", workflow)
         self.assertIn("mainPlayer.position = Number(playerState.positionMs || 0)", workflow)
         self.assertNotIn("root.currentWorkspace", workflow)
 
@@ -59,7 +60,7 @@ class WorkspaceContractTests(unittest.TestCase):
 
         self.assertIn(
             'readonly property bool codexAuthenticated: root.appBackend\n'
-            '        && root.appBackend.codexAuthState === "authenticated"',
+            '        && root.appBackend.ai.codexAuthState === "authenticated"',
             workflow,
         )
         self.assertIn("backend: root.appBackend", workflow)

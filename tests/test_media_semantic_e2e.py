@@ -13,6 +13,7 @@ from src.video_encoding import select_automatic_video_codec
 from tests.media_test_helpers import (
     FrameDifference,
     FrameRegion,
+    MediaFixture,
     MediaSegment,
     assert_frame_difference_absent,
     assert_frame_difference_present,
@@ -29,6 +30,7 @@ from tests.media_test_helpers import (
     run_media_command,
     video_stream,
 )
+from tests.typed_case import TypedTestCase, typed_skip_unless
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -42,7 +44,7 @@ LINE_COUNT_TEXT = "SEMANTIC LINE TEST"
 MANUAL_BREAK_TEXT = "SEMANTIC LINE\nTEST"
 
 
-class MediaCommandDiagnosticTests(unittest.TestCase):
+class MediaCommandDiagnosticTests(TypedTestCase):
     def test_failure_reports_command_output_and_fixture_context(self) -> None:
         command = [
             sys.executable,
@@ -67,11 +69,13 @@ class MediaCommandDiagnosticTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             started_marker = Path(temp_dir) / "descendant-started.txt"
             marker = Path(temp_dir) / "descendant-completed.txt"
+            # Windowsのtaskkill /Tが高負荷時でも子プロセスの終了前に処理できる猶予を設ける。
+            descendant_completion_delay_seconds = 5.0
             child_code = (
                 "from pathlib import Path; "
                 "import time; "
                 f"Path({str(started_marker)!r}).write_text('started', encoding='utf-8'); "
-                "time.sleep(1.5); "
+                f"time.sleep({descendant_completion_delay_seconds}); "
                 f"Path({str(marker)!r}).write_text('survived', encoding='utf-8')"
             )
             parent_code = (
@@ -90,15 +94,29 @@ class MediaCommandDiagnosticTests(unittest.TestCase):
 
             self.assertIn("descendant_pid=", str(raised.exception))
             self.assertTrue(started_marker.is_file(), "Descendant process did not reach the test checkpoint.")
-            time.sleep(1.6)
+            time.sleep(descendant_completion_delay_seconds + 0.2)
             self.assertFalse(marker.exists(), "Timed-out command left a descendant process running.")
 
 
-@unittest.skipUnless(
+@typed_skip_unless(
     os.environ.get("RUN_FFMPEG_SMOKE") == "1",
     "set RUN_FFMPEG_SMOKE=1 to exercise semantic media E2E",
 )
-class MediaSemanticE2ETests(unittest.TestCase):
+class MediaSemanticE2ETests(TypedTestCase):
+    _temporary: tempfile.TemporaryDirectory[str]
+    root: Path
+    fixture: MediaFixture
+    selected_codec: str
+    control_ass: Path
+    one_line_ass: Path
+    two_line_ass: Path
+    manual_break_ass: Path
+    control_output: Path
+    one_line_output: Path
+    two_line_output: Path
+    manual_break_output: Path
+    output_probes: dict[Path, dict[str, object]]
+
     @classmethod
     def setUpClass(cls) -> None:
         require_media_tools()

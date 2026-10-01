@@ -10,9 +10,10 @@ from src.ass_template import (
     clone_style_definition,
     normalize_ass_color,
 )
+from tests.typed_case import TypedTestCase
 
 
-class AssTemplateTests(unittest.TestCase):
+class AssTemplateTests(TypedTestCase):
     def test_normalize_ass_color_accepts_and_preserves_andh_format(self) -> None:
         self.assertEqual(normalize_ass_color("&H00FF1234"), "&H00FF1234")
 
@@ -33,8 +34,9 @@ class AssTemplateTests(unittest.TestCase):
         self.assertIn("&H00CCBBAA", cloned)
 
     def test_build_extra_style_definitions_returns_empty_without_overrides(self) -> None:
-        self.assertEqual(build_extra_style_definitions(None), [])
-        self.assertEqual(build_extra_style_definitions({}), [])
+        expected: list[str] = []
+        self.assertEqual(build_extra_style_definitions(None), expected)
+        self.assertEqual(build_extra_style_definitions({}), expected)
 
     def test_build_extra_style_definitions_clones_each_override(self) -> None:
         overrides = {"Alice": ("Oz", "#AABBCC")}

@@ -1,0 +1,217 @@
+import QtQuick
+
+QtObject {
+    id: state
+    required property var subtitles
+    property bool running: false
+    property bool previewEnabled: false
+    property real pixelsPerSecond: 64
+    property int snapMilliseconds: 100
+    property real positionMs: 0
+    property real timelineScrollX: 0
+    property real captionScrollY: 0
+    property int draftSegmentIndex: -1
+    property string draftText: ""
+    property string projectPath: ""
+    property string draftSegmentId: ""
+    property string draftProjectPath: ""
+    property string draftOriginalText: ""
+    readonly property bool hasPendingSubtitleText: draftSegmentId !== "" && draftText !== draftOriginalText
+    property int timeDraftSegmentIndex: -1
+    property string timeDraftSegmentId: ""
+    property string timeDraftProjectPath: ""
+    property string timeDraftProperty: ""
+    property string timeDraftText: ""
+    property string timeDraftOriginalText: ""
+    property bool timeDraftAcceptableInput: false
+    readonly property bool hasPendingTimeEdit: timeDraftSegmentId !== "" && timeDraftText !== timeDraftOriginalText
+    readonly property bool hasIncompleteTimeEdit: hasPendingTimeEdit
+        && timeDraftProjectPath === projectPath
+        && (!timeDraftAcceptableInput || !isFinite(Number(timeDraftText)) || Number(timeDraftText) < 0)
+
+    function canSplitSelectedSegment(positionMs) {
+        var index = state.subtitles.selectedSegmentIndex;
+        var segmentCount = state.subtitles.segmentCount;
+        if (index < 0 || index >= segmentCount)
+            return false;
+        var segment = state.subtitles.segmentAt(index);
+        var seconds = Number(positionMs) / 1000;
+        return seconds > Number(segment.start) + 0.05 && seconds < Number(segment.end) - 0.05;
+    }
+
+    function subtitleIndexForId(segmentId, preferredIndex) {
+        if (!segmentId)
+            return -1
+        if (preferredIndex >= 0
+                && String(state.subtitles.segmentAt(preferredIndex).id || "") === segmentId)
+            return preferredIndex
+        for (var index = 0; index < state.subtitles.segmentCount; ++index) {
+            if (String(state.subtitles.segmentAt(index).id || "") === segmentId)
+                return index
+        }
+        return -1
+    }
+
+    function beginSubtitleDraft(segmentIndex, text) {
+        if (state.running)
+            return
+        var segment = state.subtitles.segmentAt(segmentIndex)
+        var segmentId = String(segment.id || "")
+        if (state.draftSegmentId !== "") {
+            if (state.hasPendingSubtitleText
+                    && state.draftSegmentId === segmentId
+                    && state.draftProjectPath === state.projectPath) {
+                state.draftSegmentIndex = segmentIndex
+                return
+            }
+            state.commitSubtitleDraft()
+        }
+        state.draftSegmentIndex = segmentIndex
+        state.draftSegmentId = segmentId
+        state.draftProjectPath = state.projectPath
+        state.draftOriginalText = String(text)
+        state.draftText = String(text)
+    }
+
+    function pendingTextForSegment(segmentId, fallbackText) {
+        if (state.hasPendingSubtitleText
+                && state.draftProjectPath === state.projectPath
+                && state.draftSegmentId === String(segmentId))
+            return state.draftText
+        return String(fallbackText)
+    }
+
+    function updateSubtitleDraft(segmentIndex, text) {
+        if (state.draftSegmentId !== "")
+            state.draftText = String(text)
+    }
+
+    function clearSubtitleDraft() {
+        state.draftSegmentIndex = -1
+        state.draftSegmentId = ""
+        state.draftProjectPath = ""
+        state.draftOriginalText = ""
+        state.draftText = ""
+    }
+
+    function commitSubtitleDraft(expectedId) {
+        if (expectedId !== undefined && expectedId !== state.draftSegmentId)
+            return
+        // 処理中に入力欄が無効化されても、確定できない本文を破棄しない。
+        if (state.running)
+            return
+        var id = state.draftSegmentId
+        var projectPath = state.draftProjectPath
+        var preferredIndex = state.draftSegmentIndex
+        var text = state.draftText
+        var changed = state.hasPendingSubtitleText
+        // モデル更新・フォーカス通知が再入しても同じ入力を二度反映しない。
+        state.clearSubtitleDraft()
+        if (!changed || projectPath !== state.projectPath)
+            return
+        var index = state.subtitleIndexForId(id, preferredIndex)
+        if (index < 0)
+            return // 削除済みの字幕の本文を、同じ行に移動した別の字幕へ反映しない。
+        var selectedIndex = state.subtitles.selectedSegmentIndex
+        var selectedId = String(state.subtitles.segmentAt(selectedIndex).id || "")
+        state.subtitles.updateSegment(index, {"text": text})
+        if (selectedId !== id)
+            state.subtitles.selectSegment(state.subtitleIndexForId(selectedId, selectedIndex))
+    }
+
+    function beginTimeDraft(segmentIndex, propertyName, text, acceptableInput) {
+        if (state.running)
+            return
+        var segment = state.subtitles.segmentAt(segmentIndex)
+        var segmentId = String(segment.id || "")
+        if (state.timeDraftSegmentId !== "") {
+            if (state.hasPendingTimeEdit
+                    && state.timeDraftSegmentId === segmentId
+                    && state.timeDraftProperty === propertyName
+                    && state.timeDraftProjectPath === state.projectPath) {
+                state.timeDraftSegmentIndex = segmentIndex
+                return true
+            }
+            if (!state.commitTimeDraft())
+                return false
+        }
+        state.timeDraftSegmentIndex = segmentIndex
+        state.timeDraftSegmentId = segmentId
+        state.timeDraftProjectPath = state.projectPath
+        state.timeDraftProperty = propertyName
+        state.timeDraftOriginalText = String(text)
+        state.timeDraftText = String(text)
+        state.timeDraftAcceptableInput = Boolean(acceptableInput)
+        return true
+    }
+
+    function updateTimeDraft(segmentId, propertyName, text, acceptableInput) {
+        if (state.timeDraftSegmentId === String(segmentId) && state.timeDraftProperty === propertyName) {
+            state.timeDraftText = String(text)
+            state.timeDraftAcceptableInput = Boolean(acceptableInput)
+        }
+    }
+
+    function pendingTimeForSegment(segmentId, propertyName, fallbackText) {
+        if (state.hasPendingTimeEdit
+                && state.timeDraftProjectPath === state.projectPath
+                && state.timeDraftSegmentId === String(segmentId)
+                && state.timeDraftProperty === propertyName)
+            return state.timeDraftText
+        return String(fallbackText)
+    }
+
+    function clearTimeDraft() {
+        state.timeDraftSegmentIndex = -1
+        state.timeDraftSegmentId = ""
+        state.timeDraftProjectPath = ""
+        state.timeDraftProperty = ""
+        state.timeDraftText = ""
+        state.timeDraftOriginalText = ""
+        state.timeDraftAcceptableInput = false
+    }
+
+    function commitTimeDraft(expectedId, expectedProperty) {
+        if (expectedId !== undefined && expectedId !== state.timeDraftSegmentId)
+            return true
+        if (expectedProperty !== undefined && expectedProperty !== state.timeDraftProperty)
+            return true
+        if (state.running)
+            return false
+        var id = state.timeDraftSegmentId
+        var projectPath = state.timeDraftProjectPath
+        var preferredIndex = state.timeDraftSegmentIndex
+        var propertyName = state.timeDraftProperty
+        var text = state.timeDraftText
+        var changed = state.hasPendingTimeEdit
+        var acceptable = state.timeDraftAcceptableInput
+        if (!changed || projectPath !== state.projectPath) {
+            state.clearTimeDraft()
+            return true
+        }
+        var index = state.subtitleIndexForId(id, preferredIndex)
+        var value = Number(text)
+        if (!acceptable || !isFinite(value) || value < 0)
+            return false
+        state.clearTimeDraft()
+        if (index < 0)
+            return true
+        var selectedIndex = state.subtitles.selectedSegmentIndex
+        var selectedId = String(state.subtitles.segmentAt(selectedIndex).id || "")
+        var changes = ({})
+        changes[propertyName] = value
+        state.subtitles.updateSegment(index, changes)
+        if (selectedId !== id)
+            state.subtitles.selectSegment(state.subtitleIndexForId(selectedId, selectedIndex))
+        return true
+    }
+
+    function subtitlePreviewText(segmentData) {
+        var sourceIndex = Number(segmentData.sourceIndex);
+        if (state.previewEnabled && String(segmentData.id || "") === state.draftSegmentId)
+            return state.subtitles.formatSubtitlePreview(sourceIndex, state.draftText);
+        if (segmentData.preview_text !== undefined)
+            return String(segmentData.preview_text);
+        return String(segmentData.text || "");
+    }
+}

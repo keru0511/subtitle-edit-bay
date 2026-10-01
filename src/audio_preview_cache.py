@@ -5,10 +5,11 @@ from hashlib import sha256
 from pathlib import Path
 import subprocess
 import time
-from typing import Any, Iterable
+from typing import Iterable, Mapping, cast
 from uuid import uuid4
 
 from .process_utils import hidden_subprocess_kwargs
+from .data_boundary import is_object_iterable, is_object_mapping
 
 
 AUDIO_PREVIEW_CACHE_VERSION = 2
@@ -54,10 +55,7 @@ def _source_cache_key(source_path: Path, selector: str) -> str:
         fingerprint = f"{stat.st_size}:{stat.st_mtime_ns}"
     except OSError:
         fingerprint = "missing"
-    payload = (
-        f"{AUDIO_PREVIEW_CACHE_VERSION}\0{str(resolved).casefold()}\0"
-        f"{fingerprint}\0{selector}"
-        )
+    payload = f"{AUDIO_PREVIEW_CACHE_VERSION}\0{str(resolved).casefold()}\0{fingerprint}\0{selector}"
     return sha256(payload.encode("utf-8")).hexdigest()[:24]
 
 
@@ -66,30 +64,28 @@ def _cache_filename(channel_kind: str, cache_key: str) -> str:
 
 
 def audio_preview_cache_entries(
-    project: dict[str, Any],
+    project: Mapping[str, object],
     cache_root: str | Path,
 ) -> list[AudioPreviewCacheEntry]:
-    video_value = str(project.get("video", {}).get("path", "")).strip()
+    video = project.get("video", {})
+    audio_mix = project.get("audio_mix", {})
+    if not is_object_mapping(video) or not is_object_mapping(audio_mix):
+        raise TypeError("project video and audio_mix must be objects")
+    video_value = str(video.get("path", "")).strip()
     root = Path(cache_root)
     entries: list[AudioPreviewCacheEntry] = []
-    channels = project.get("audio_mix", {}).get("channels", [])
+    channels = audio_mix.get("channels", [])
+    if not is_object_iterable(channels):
+        raise TypeError("audio_mix channels must be iterable")
     for channel in channels:
-        if not isinstance(channel, dict) or not str(channel.get("id", "")).strip():
+        if not isinstance(channel, dict) or not is_object_mapping(channel) or not str(channel.get("id", "")).strip():
             continue
         is_external = channel.get("kind") == "external"
-        source_value = (
-            str(channel.get("path", "")).strip()
-            if is_external
-            else video_value
-        )
+        source_value = str(channel.get("path", "")).strip() if is_external else video_value
         if not source_value:
             continue
         source_path = Path(source_value)
-        selector = (
-            "0:a:0"
-            if is_external
-            else str(channel.get("selector") or "0:a:0")
-        )
+        selector = "0:a:0" if is_external else str(channel.get("selector") or "0:a:0")
         cache_key = _source_cache_key(source_path, selector)
         kind = "external" if is_external else "video"
         entries.append(
@@ -172,7 +168,11 @@ def prune_audio_preview_cache(
         current_files.append((int(size), mtime, resolved))
 
     current_total = sum(size for size, _mtime, _path in current_files)
-    current_files.sort(key=lambda item: item[1])
+
+    def cache_file_mtime(item: tuple[int, float, Path]) -> float:
+        return item[1]
+
+    current_files.sort(key=cache_file_mtime)
     if max_bytes == 0:
         for size, _mtime, path in current_files:
             _remove(path)
@@ -230,11 +230,7 @@ def _run_cache_group(entries: list[AudioPreviewCacheEntry]) -> str | None:
         return f"{source_path.name}: source file was not found"
 
     unique_entries = list(
-        {
-            entry.output_path: entry
-            for entry in entries
-            if not _valid_cache_file(entry.output_path)
-        }.values()
+        {entry.output_path: entry for entry in entries if not _valid_cache_file(entry.output_path)}.values()
     )
     if not unique_entries:
         return None
@@ -253,9 +249,7 @@ def _run_cache_group(entries: list[AudioPreviewCacheEntry]) -> str | None:
     ]
     for entry in unique_entries:
         entry.output_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = entry.output_path.with_name(
-            f".{entry.output_path.stem}.{uuid4().hex}.tmp.mka"
-        )
+        temporary_path = entry.output_path.with_name(f".{entry.output_path.stem}.{uuid4().hex}.tmp.mka")
         temporary_paths.append(temporary_path)
         command.extend(
             [
@@ -291,7 +285,7 @@ def _run_cache_group(entries: list[AudioPreviewCacheEntry]) -> str | None:
                 raise OSError(f"FFmpeg did not create {entry.output_path.name}")
             temporary_path.replace(entry.output_path)
     except (OSError, subprocess.SubprocessError) as error:
-        stderr = str(getattr(error, "stderr", "") or "").strip()
+        stderr = str(cast(object, getattr(error, "stderr", "")) or "").strip()
         detail = stderr.splitlines()[-1] if stderr else str(error)
         return f"{source_path.name}: {detail}"
     finally:
@@ -304,7 +298,7 @@ def _run_cache_group(entries: list[AudioPreviewCacheEntry]) -> str | None:
 
 
 def prepare_audio_preview_cache(
-    project: dict[str, Any],
+    project: Mapping[str, object],
     cache_root: str | Path,
     protected_paths: Iterable[Path] | None = None,
 ) -> AudioPreviewCacheResult:
@@ -318,11 +312,7 @@ def prepare_audio_preview_cache(
         if not _valid_cache_file(entry.output_path):
             groups.setdefault(entry.source_path, []).append(entry)
 
-    errors = [
-        error
-        for group in groups.values()
-        if (error := _run_cache_group(group)) is not None
-    ]
+    errors = [error for group in groups.values() if (error := _run_cache_group(group)) is not None]
     prune_audio_preview_cache(
         cache_root,
         protected_paths=required_paths,
@@ -331,4 +321,3 @@ def prepare_audio_preview_cache(
         paths=cached_audio_preview_paths(entries),
         errors=tuple(errors),
     )
-

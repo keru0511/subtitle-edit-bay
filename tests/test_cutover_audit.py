@@ -4,13 +4,14 @@ import ast
 import re
 import unittest
 from pathlib import Path
+from tests.typed_case import TypedTestCase
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 AUDIT_DOCUMENT = REPOSITORY_ROOT / "docs" / "cutover-403-audit.md"
 
 
-class CutoverAuditContractTests(unittest.TestCase):
+class CutoverAuditContractTests(TypedTestCase):
     def setUp(self) -> None:
         self.document = AUDIT_DOCUMENT.read_text(encoding="utf-8")
 
@@ -46,7 +47,6 @@ class CutoverAuditContractTests(unittest.TestCase):
             "portable-unit（tests/test_gui_workspace_controller.py）",
             "qt-gui（tests/test_gui_editor.py）",
             "ffmpeg-runtime（tests/test_short_video_semantic_e2e.py）",
-
         ):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.document)
@@ -71,27 +71,22 @@ class CutoverAuditContractTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.document)
 
-
     def test_audit_references_real_test_definitions(self) -> None:
-        module_names = set(
-            re.findall(r"tests/(test_[A-Za-z0-9_]+)\.py", self.document)
-        )
-        referenced_names = set(
-            re.findall(r"(?<![A-Za-z0-9_/])test_[A-Za-z0-9_]+", self.document)
-        ) - module_names
+        module_names = {match.group(1) for match in re.finditer(r"tests/(test_[A-Za-z0-9_]+)\.py", self.document)}
+        referenced_names = {
+            match.group() for match in re.finditer(r"(?<![A-Za-z0-9_/])test_[A-Za-z0-9_]+", self.document)
+        } - module_names
 
-        definitions = set()
+        definitions: set[str] = set()
         for test_path in (REPOSITORY_ROOT / "tests").glob("test_*.py"):
             tree = ast.parse(test_path.read_text(encoding="utf-8"), filename=str(test_path))
             definitions.update(
                 node.name
                 for node in ast.walk(tree)
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and node.name.startswith("test_")
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")
             )
 
         self.assertEqual(sorted(referenced_names - definitions), [])
-
 
     def test_blocker_count_excludes_parent_and_audit_pr_states(self) -> None:
         for marker in (
@@ -103,7 +98,6 @@ class CutoverAuditContractTests(unittest.TestCase):
         ):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.document)
-
 
     def test_audit_preserves_non_scope_and_new_issue_boundary(self) -> None:
         for marker in (

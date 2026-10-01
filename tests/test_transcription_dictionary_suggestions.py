@@ -7,9 +7,10 @@ from src.transcription_dictionary_suggestions import (
     apply_dictionary_suggestion,
     extract_dictionary_suggestions,
 )
+from tests.typed_case import TypedTestCase
 
 
-class DictionarySuggestionTests(unittest.TestCase):
+class DictionarySuggestionTests(TypedTestCase):
     def test_token_replacement_aggregates_projects_and_ignores_format_only_changes(self) -> None:
         suggestions = extract_dictionary_suggestions(
             [

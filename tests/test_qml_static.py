@@ -6,6 +6,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from tests.typed_case import TypedTestCase
 
 
 UI_ROOT = Path(__file__).resolve().parents[1] / "src" / "ui"
@@ -14,6 +15,8 @@ WORKFLOW_QML = UI_ROOT / "screens" / "MainWorkflowScreen.qml"
 WORKFLOW_WRAPPER_QML = UI_ROOT / "screens" / "MainWorkflowScreenWithContext.qml"
 COMPONENTS_ROOT = UI_ROOT / "components"
 WORKSPACE_HEADER_QML = COMPONENTS_ROOT / "WorkspaceHeader.qml"
+START_SCREEN_QML = COMPONENTS_ROOT / "ProjectStartScreen.qml"
+START_FLOW_QML = COMPONENTS_ROOT / "ProjectStartFlow.qml"
 SEQUENCE_EDITOR_QML = COMPONENTS_ROOT / "SequenceEditorPanel.qml"
 SHARED_CONTROL_QML_FILES = (
     COMPONENTS_ROOT / "ContextActionBar.qml",
@@ -29,12 +32,28 @@ SHARED_CONTROL_QML_FILES = (
     WORKSPACE_HEADER_QML,
     COMPONENTS_ROOT / "AudioPreviewBridge.qml",
     COMPONENTS_ROOT / "AudioModeSettings.qml",
+    COMPONENTS_ROOT / "AudioMixerScreen.qml",
+    COMPONENTS_ROOT / "AudioMixerPreviewSession.qml",
+    COMPONENTS_ROOT / "AudioMixerChannelStrip.qml",
+    COMPONENTS_ROOT / "AudioWorkspaceEditor.qml",
+    COMPONENTS_ROOT / "SourceSettingsPopup.qml",
+    COMPONENTS_ROOT / "AdvancedSettingsPopup.qml",
+    COMPONENTS_ROOT / "WorkspaceInspectorPanel.qml",
+    COMPONENTS_ROOT / "WorkspacePreviewPanel.qml",
+    START_SCREEN_QML,
+    START_FLOW_QML,
     COMPONENTS_ROOT / "CutModeSettings.qml",
     COMPONENTS_ROOT / "CutModeTimeline.qml",
     COMPONENTS_ROOT / "SubtitleModeSettings.qml",
     COMPONENTS_ROOT / "SubtitleOverlay.qml",
+    COMPONENTS_ROOT / "SubtitleTimeline.qml",
+    COMPONENTS_ROOT / "SubtitleEditorState.qml",
+    COMPONENTS_ROOT / "SubtitleEditorButton.qml",
+    COMPONENTS_ROOT / "SubtitleEditorScreen.qml",
+    COMPONENTS_ROOT / "SubtitleWorkspaceEditor.qml",
     COMPONENTS_ROOT / "ShortModePreview.qml",
     SEQUENCE_EDITOR_QML,
+    COMPONENTS_ROOT / "MediaBinPanel.qml",
 )
 QML_LINT_FILES = (
     ENTRYPOINT_QML,
@@ -45,33 +64,29 @@ QML_LINT_FILES = (
 )
 
 
-class QmlStaticTests(unittest.TestCase):
+class QmlStaticTests(TypedTestCase):
     def test_sequence_editor_uses_backend_view_and_mutation_boundary(self) -> None:
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
-        panel = SEQUENCE_EDITOR_QML.read_text(encoding="utf-8")
+        panel = SEQUENCE_EDITOR_QML.read_text(encoding="utf-8") + (COMPONENTS_ROOT / "MediaBinPanel.qml").read_text(encoding="utf-8")
 
         self.assertEqual(workflow.count("SequenceEditorPanel {"), 1)
         self.assertIn('objectName: "workspaceSequenceEditor"', workflow)
-        self.assertIn(
-            'visible: root.appBackend.currentWorkspace === "normal-video"\n'
-            '                        && root.appBackend.projectLoaded\n'
-            '                        && root.appBackend.currentEditMode === "cut"',
-            workflow,
-        )
+        self.assertIn('objectName: "workspaceMediaBin"', workflow)
+        self.assertIn('root.editTool === "sequence"', workflow)
         for binding in (
-            "backend.mediaBinAssets",
-            "backend.sequenceClips",
-            "backend.sequenceOutputDuration",
-            "backend.sequencePlayhead",
-            "backend.addSequenceAssets",
-            "backend.addSequenceClip",
-            "backend.moveSequenceClip",
-            "backend.trimSequenceClip",
-            "backend.setSequenceTransition",
-            "backend.setSequenceClipAudio",
-            "backend.setSequencePlayhead",
-            "backend.canUndo",
-            "backend.canRedo",
+            "backend.sequence.mediaBinAssets",
+            "backend.sequence.sequenceClips",
+            "backend.sequence.sequenceOutputDuration",
+            "backend.sequence.sequencePlayhead",
+            "backend.sequence.addSequenceAssets",
+            "backend.sequence.addSequenceClip",
+            "backend.sequence.moveSequenceClip",
+            "backend.sequence.trimSequenceClip",
+            "backend.sequence.setSequenceTransition",
+            "backend.sequence.setSequenceClipAudio",
+            "backend.sequence.setSequencePlayhead",
+            "backend.subtitles.canUndo",
+            "backend.subtitles.canRedo",
         ):
             with self.subTest(binding=binding):
                 self.assertIn(binding, panel)
@@ -103,15 +118,14 @@ class QmlStaticTests(unittest.TestCase):
         header = WORKSPACE_HEADER_QML.read_text(encoding="utf-8")
 
         self.assertEqual(workflow.count("WorkspaceHeader {"), 1)
-        self.assertIn("workspaceKind: root.appBackend.currentWorkspace", workflow)
-        self.assertIn("currentEditMode: root.appBackend.currentEditMode", workflow)
+        self.assertIn("workspaceKind: root.appBackend.workspace.currentWorkspace", workflow)
+        self.assertIn("currentEditMode: root.appBackend.workspace.currentEditMode", workflow)
+        # 保存・書き出しの接続はtest_gui_editorの実キー入力・実クリックで検証する。
+        # プロジェクト切替はtest_project_open_commits_pending_text_to_original_projectで検証する。
+        # 素材設定の接続はtest_source_settings_waits_for_uncommitted_ime_textで検証する。
         for action in (
-            "onProjectOpenRequested: root.appBackend.browseProjectFile()",
-            "onSourceSettingsRequested: sourcePopup.open()",
-            "onSaveRequested: root.appBackend.saveProject()",
             "onOutputFolderRequested: root.appBackend.openOutputFolder()",
             "onShortWorkspaceRequested: root.openShortWorkspace()",
-            "onRenderRequested: root.appBackend.renderVideo(root.currentSettings())",
         ):
             with self.subTest(action=action):
                 self.assertIn(action, workflow)
@@ -136,14 +150,20 @@ class QmlStaticTests(unittest.TestCase):
         self.assertNotIn("FileDialog", header)
 
     def test_start_screen_uses_project_actions_instead_of_workflow_steps(self) -> None:
-        source = (Path(__file__).resolve().parents[1] / "src" / "ui" / "screens" / "MainWorkflowScreen.qml").read_text(encoding="utf-8")
-        self.assertIn('objectName: "projectStartScreen"', source)
-        self.assertIn('objectName: "newVideoEditButton"', source)
-        self.assertIn('objectName: "startScreenOpenProjectButton"', source)
-        self.assertIn('objectName: "startWithTranscriptionButton"', source)
-        self.assertIn('objectName: "startScreenSettingsButton"', source)
-        self.assertNotIn('"文字起こし後に自動作成"', source)
-        self.assertNotIn('model: ["素材", "文字起こし", "字幕・カット・音量", "書き出し"]', source)
+        workflow = WORKFLOW_QML.read_text(encoding="utf-8")
+        start_screen = START_SCREEN_QML.read_text(encoding="utf-8")
+        self.assertEqual(workflow.count("ProjectStartScreen {"), 1)
+        self.assertEqual(workflow.count("ProjectStartFlow {"), 1)
+        for object_name in (
+            "projectStartScreen",
+            "newVideoEditButton",
+            "startScreenOpenProjectButton",
+            "startWithTranscriptionButton",
+            "startScreenSettingsButton",
+        ):
+            self.assertIn(f'objectName: "{object_name}"', start_screen)
+        self.assertNotIn('"文字起こし後に自動作成"', workflow + start_screen)
+        self.assertNotIn('model: ["素材", "文字起こし", "字幕・カット・音量", "書き出し"]', workflow + start_screen)
 
     def test_qml_files_pass_qmllint_without_warnings(self) -> None:
         executable_name = "pyside6-qmllint.exe" if os.name == "nt" else "pyside6-qmllint"
@@ -185,26 +205,23 @@ class QmlStaticTests(unittest.TestCase):
         panel = (COMPONENTS_ROOT / "CodexChatPanel.qml").read_text(encoding="utf-8")
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
         self.assertIn('objectName: "aiProviderHeaderCombo"', panel)
-        self.assertIn("backend.aiChatModelSelectionSupported", panel)
-        self.assertIn("backend.aiChatLoginAvailable", panel)
-        self.assertIn("backend.aiChatAuthHint", panel)
+        self.assertIn("backend.ai.aiChatModelSelectionSupported", panel)
+        self.assertNotIn('objectName: "codexConnectButton"', panel)
+        self.assertIn("backend.ai.aiChatAuthHint", panel)
         self.assertIn('objectName: "aiProviderLoginCombo"', workflow)
         self.assertIn('objectName: "aiProviderAuthHint"', workflow)
-        self.assertIn("root.appBackend.aiChatAuthHint", workflow)
-        self.assertIn("root.appBackend.aiChatLoginAvailable", workflow)
+        self.assertIn("root.appBackend.ai.aiChatAuthHint", workflow)
+        self.assertIn("root.appBackend.ai.aiChatLoginAvailable", workflow)
         self.assertIn('readonly property string aiProviderLoginLabel', workflow)
-        self.assertIn('String(root.appBackend.aiChatProviderName || "")', workflow)
+        self.assertIn('String(root.appBackend.ai.aiChatProviderName || "")', workflow)
         self.assertIn(": root.aiProviderLoginLabel", workflow)
-        self.assertIn('root.appBackend.startAIProviderLogin()', workflow)
-        self.assertIn('root.appBackend.reconnectAIChat()', workflow)
-        self.assertIn('root.appBackend.openAIProviderLoginPage()', workflow)
+        self.assertIn('root.appBackend.ai.startAIProviderLogin()', workflow)
+        self.assertIn('root.appBackend.ai.reconnectAIChat()', workflow)
+        self.assertIn('root.appBackend.ai.openAIProviderLoginPage()', workflow)
         for method in (
-            "backend.selectAIProvider(currentValue)",
-            "backend.startAIProviderLogin()",
-            "backend.reconnectAIChat()",
-            "backend.openAIProviderLoginPage()",
-            "backend.reloginAIProvider()",
-            "backend.logoutAIProvider()",
+            "backend.ai.selectAIProvider(currentValue)",
+            "backend.ai.reloginAIProvider()",
+            "backend.ai.logoutAIProvider()",
         ):
             with self.subTest(method=method):
                 self.assertIn(method, panel)
@@ -228,7 +245,7 @@ class QmlStaticTests(unittest.TestCase):
     def test_codex_proposal_panel_supports_audio_mix_operations(self) -> None:
         panel = (COMPONENTS_ROOT / "CodexEditPanel.qml").read_text(encoding="utf-8")
 
-        self.assertIn("property bool audioHasProposal: Boolean(backend && backend.audioMixProposal", panel)
+        self.assertIn("property bool audioHasProposal: Boolean(backend && backend.audio.audioMixProposal", panel)
         self.assertIn("audioMixProposal", panel)
         self.assertIn("update_audio_channel", panel)
         self.assertIn("applyAudioMixProposal", panel)
@@ -239,18 +256,27 @@ class QmlStaticTests(unittest.TestCase):
     def test_common_codex_sidebar_only_reserves_width_when_authenticated(self) -> None:
         workflow = WORKFLOW_QML.read_text(encoding="utf-8")
         sidebar = (COMPONENTS_ROOT / "CodexSidebarContainer.qml").read_text(encoding="utf-8")
+        inspector = (COMPONENTS_ROOT / "WorkspaceInspectorPanel.qml").read_text(encoding="utf-8")
 
         self.assertEqual(workflow.count("CodexSidebarContainer {"), 1)
         self.assertIn('objectName: "commonCodexSidebar"', workflow)
         self.assertIn(
-            'root.appBackend.codexAuthState === "authenticated"',
+            'root.appBackend.ai.codexAuthState === "authenticated"',
             workflow,
         )
-        self.assertIn("root.codexAuthenticated && root.codexDrawerOpen ? 300 : 0", workflow)
+        self.assertIn("&& !root.loginInInspector ? 300 : 0", workflow)
         self.assertIn("readonly property int codexDrawerHeaderInset", workflow)
         self.assertIn("readonly property int codexDrawerBodyInset", workflow)
         self.assertIn("readonly property int codexInteractiveRightInset", workflow)
-        self.assertIn("visible: root.codexAuthenticated && root.codexDrawerOpen", workflow)
+        self.assertIn(
+            'root.loginInInspector ? root.inspectorTab === "codex" : root.codexDrawerOpen',
+            workflow,
+        )
+        self.assertIn('objectName: "inspectorSettingsTabButton"', inspector)
+        self.assertIn('objectName: "inspectorCodexTabButton"', inspector)
+        self.assertIn('text: "編集プロパティ"', inspector)
+        self.assertIn('text: "AI Codex"', inspector)
+        self.assertIn('modeSettingsSlot.tabBarHeight', workflow)
         self.assertNotIn(
             "visible: !root.editorMode && !root.mixerMode && !root.dictionaryMode && !root.shortMode\n        }",
             workflow,
@@ -262,7 +288,7 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn("Layout.rightMargin: root.codexDrawerBodyInset", workflow)
         self.assertIn("visible: !root.codexAuthenticated", workflow)
         self.assertIn("chatPanel.expanded = true", sidebar)
-        self.assertIn("sidebar.backend.aiChatProviderName", sidebar)
+        self.assertIn("sidebar.backend.ai.aiChatProviderName", sidebar)
         self.assertNotIn('text: "Codex"', sidebar)
 
     def test_user_facing_copy_avoids_internal_terms(self) -> None:
@@ -270,7 +296,17 @@ class QmlStaticTests(unittest.TestCase):
             "codex edit": (COMPONENTS_ROOT / "CodexEditPanel.qml").read_text(encoding="utf-8"),
             "highlight": (COMPONENTS_ROOT / "HighlightCandidateList.qml").read_text(encoding="utf-8"),
             "dictionary": (COMPONENTS_ROOT / "TranscriptionContextPanel.qml").read_text(encoding="utf-8"),
-            "workflow": WORKFLOW_QML.read_text(encoding="utf-8"),
+            "workflow": "".join(path.read_text(encoding="utf-8") for path in (
+                WORKFLOW_QML,
+                START_SCREEN_QML,
+                COMPONENTS_ROOT / "SubtitleEditorScreen.qml",
+                COMPONENTS_ROOT / "AudioMixerScreen.qml",
+                COMPONENTS_ROOT / "AudioMixerChannelStrip.qml",
+                COMPONENTS_ROOT / "SourceSettingsPopup.qml",
+                COMPONENTS_ROOT / "AdvancedSettingsPopup.qml",
+                COMPONENTS_ROOT / "WorkspaceInspectorPanel.qml",
+                COMPONENTS_ROOT / "WorkspacePreviewPanel.qml",
+            )),
             "short settings": (COMPONENTS_ROOT / "ShortModeSettingsPanel.qml").read_text(encoding="utf-8"),
             "short clips": (COMPONENTS_ROOT / "ShortModeClipList.qml").read_text(encoding="utf-8"),
         }
@@ -322,19 +358,22 @@ class QmlStaticTests(unittest.TestCase):
         editor_content = workflow.split("id: editorContentComponent", 1)[1].split(
             "id: shortModePage", 1
         )[0]
+        inspector = (COMPONENTS_ROOT / "WorkspaceInspectorPanel.qml").read_text(encoding="utf-8")
+        preview = (COMPONENTS_ROOT / "WorkspacePreviewPanel.qml").read_text(encoding="utf-8")
 
         self.assertIn('property string activeOverlay: ""', workflow)
-        self.assertIn('root.appBackend.currentWorkspace', workflow)
-        self.assertIn('root.appBackend.setWorkspacePlayerState', workflow)
-        self.assertIn('root.appBackend.switchWorkspace("short-artifact")', workflow)
-        self.assertIn('root.appBackend.switchWorkspace("normal-video")', workflow)
+        self.assertIn('root.appBackend.workspace.currentWorkspace', workflow)
+        self.assertIn('root.appBackend.workspace.setWorkspacePlayerState', workflow)
+        self.assertIn('root.appBackend.workspace.switchWorkspace("short-artifact")', workflow)
+        self.assertIn('root.appBackend.workspace.switchWorkspace("normal-video")', workflow)
         self.assertIn('function onWorkspaceChanged()', workflow)
         self.assertNotIn('root.activeOverlay = "short"', workflow)
         self.assertNotIn("\n    property bool editorMode:", workflow)
         self.assertNotIn("\n    property bool mixerMode:", workflow)
         self.assertIn('objectName: "editorModeRail"', main_workspace)
         self.assertIn('objectName: "modeEditorSlot"', main_workspace)
-        self.assertIn('objectName: "modeSettingsSlot"', main_workspace)
+        self.assertIn('WorkspaceInspectorPanel {', main_workspace)
+        self.assertIn('objectName: "modeSettingsSlot"', inspector)
         self.assertIn(
             "property Component cutModeEditorContent: cutWorkspaceEditorComponent",
             workflow,
@@ -344,7 +383,8 @@ class QmlStaticTests(unittest.TestCase):
             workflow,
         )
         self.assertIn('sourceComponent: root.modeEditorContent', main_workspace)
-        self.assertIn('sourceComponent: root.modeSettingsContent', main_workspace)
+        self.assertIn('settingsContent: root.modeSettingsContent', main_workspace)
+        self.assertIn('sourceComponent: root.settingsContent', inspector)
         for stale_marker in (
             "modeEditorFallback",
             "modeSettingsFallback",
@@ -354,21 +394,30 @@ class QmlStaticTests(unittest.TestCase):
         ):
             with self.subTest(stale_marker=stale_marker):
                 self.assertNotIn(stale_marker, workflow)
-        self.assertEqual(main_workspace.count("MediaPlayer {"), 1)
-        self.assertIn('objectName: "mainWorkspacePlayer"', main_workspace)
-        self.assertIn('objectName: "mainWorkspaceAudioOutput"', main_workspace)
+        self.assertEqual(workflow.count("MediaPlayer {"), 1)
+        self.assertNotIn("MediaPlayer {", main_workspace)
+        self.assertIn('objectName: "mainWorkspacePlayer"', workflow)
+        self.assertIn('objectName: "mainWorkspaceAudioOutput"', workflow)
+        self.assertIn('WorkspacePreviewPanel {', main_workspace)
+        self.assertIn('objectName: "mainVideoPanel"', preview)
+        self.assertIn('SubtitleOverlay {', preview)
+        self.assertIn('signal seekRequested(real positionMs)', preview)
+        self.assertNotIn("MediaPlayer {", preview)
         self.assertNotIn("MediaPlayer {", editor_content)
         self.assertNotIn("editorPlayer", workflow)
-        self.assertIn("mainPlayer.videoOutput = editorVideo", editor_content)
-        self.assertIn("mainPlayer.videoOutput = mainVideo", editor_content)
-        self.assertIn('String(root.appBackend.editorPlayhead.basis || "source")', workflow)
-        self.assertIn("interval: 100", main_workspace)
-        self.assertIn("if (!root.enforceCutPreview(mainPlayer.position))", main_workspace)
+        screen = (COMPONENTS_ROOT / "SubtitleEditorScreen.qml").read_text(encoding="utf-8")
+        self.assertNotIn("MediaPlayer {", screen)
+        self.assertIn("root.previewAttached(editorVideo)", screen)
+        self.assertIn("mainPlayer.videoOutput = output", editor_content)
+        self.assertIn("mainPlayer.videoOutput = mainPreview.videoOutputItem", editor_content)
+        self.assertIn('String(root.appBackend.workspace.editorPlayhead.basis || "source")', workflow)
+        self.assertIn("interval: 100", workflow)
+        self.assertIn("if (!root.enforceCutPreview(mainPlayer.position))", workflow)
         self.assertIn(
             "root.syncEditorPlayhead(mainPlayer.position, false)",
-            main_workspace,
+            workflow,
         )
-        self.assertIn("onActiveSegmentsChanged:", editor_content)
+        self.assertIn("onActiveSegmentsChanged:", screen)
         self.assertIn("syncEditorSelectionFromActiveSegments", editor_content)
 
     def test_cut_mode_uses_the_shared_player_and_backend_time_mapping(self) -> None:
@@ -384,7 +433,8 @@ class QmlStaticTests(unittest.TestCase):
         self.assertIn('objectName: "workspaceCutSettings"', workflow)
         self.assertIn("player: mainPlayer", workflow)
         self.assertIn("nextCutPreviewSourceMs", workflow)
-        self.assertIn("editorPlayhead.outputPositionMs", workflow)
+        preview = (COMPONENTS_ROOT / "WorkspacePreviewPanel.qml").read_text(encoding="utf-8")
+        self.assertIn("editorPlayhead.outputPositionMs", preview)
         self.assertNotIn("MediaPlayer {", cut_timeline)
         self.assertNotIn("MediaPlayer {", cut_settings)
 
@@ -394,8 +444,9 @@ class QmlStaticTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn('objectName: "workspaceSubtitleEditor"', workflow)
-        self.assertIn('objectName: "workspaceAudioEditor"', workflow)
+        self.assertIn('objectName: "workspaceSubtitleEditor"', (COMPONENTS_ROOT / "SubtitleWorkspaceEditor.qml").read_text(encoding="utf-8"))
+        self.assertIn('AudioWorkspaceEditor {', workflow)
+        self.assertIn('objectName: "workspaceAudioEditor"', (COMPONENTS_ROOT / "AudioWorkspaceEditor.qml").read_text(encoding="utf-8"))
         self.assertEqual(workflow.count("AudioPreviewBridge {"), 1)
         self.assertNotIn("videoOutput", audio_bridge)
         self.assertNotIn("property real position", audio_bridge)
@@ -412,12 +463,12 @@ class QmlStaticTests(unittest.TestCase):
         self.assertNotIn("shortVideoClips", short_clip_list)
         self.assertNotIn("shortVideoClips", short_screen)
         self.assertIn("property var layoutMetrics", overlay)
-        self.assertIn("appBackend.activeSubtitleSegments", overlay)
-        self.assertIn("appBackend.segmentCount", workflow)
-        self.assertIn("appBackend.subtitleModel", short_clip_list)
-        self.assertIn("appBackend.shortVideoClipModel", short_clip_list)
-        self.assertIn("appBackend.shortVideoClipCount", short_screen)
-        self.assertIn("appBackend.shortVideoClipAt", short_screen)
+        self.assertIn("appBackend.subtitles.activeSubtitleSegments", overlay)
+        self.assertIn("appBackend.subtitles.segmentCount", workflow)
+        self.assertIn("appBackend.subtitles.subtitleModel", short_clip_list)
+        self.assertIn("appBackend.shortVideo.shortVideoClipModel", short_clip_list)
+        self.assertIn("appBackend.shortVideo.shortVideoClipCount", short_screen)
+        self.assertIn("appBackend.shortVideo.shortVideoClipAt", short_screen)
         self.assertIn("function clampCurrentClipIndex()", short_screen)
         self.assertNotIn("function clampSelected()", short_clip_list)
         self.assertNotIn("shortVideoClipCount", short_clip_list)

@@ -8,11 +8,11 @@ Rectangle {
     // qmllint disable unqualified
     property var backend
     property bool expanded: false
-    property color panelColor: "#161B22"
-    property color raisedColor: "#21262D"
-    property color borderColor: "#30363D"
-    property color textColor: "#F0F6FC"
-    property color mutedColor: "#8B949E"
+    property color panelColor: "#131A26"
+    property color raisedColor: "#1A2332"
+    property color borderColor: "#243044"
+    property color textColor: "#F8FAFC"
+    property color mutedColor: "#94A3B8"
     property color accentColor: "#6366F1"
     property color errorColor: "#EF4444"
 
@@ -20,42 +20,42 @@ Rectangle {
     implicitHeight: expanded ? Math.min(680, parent ? parent.height - 24 : 680) : 46
     radius: 10
     color: panelColor
-    border.color: backend && backend.codexChatError ? errorColor : borderColor
+    border.color: backend && backend.ai.codexChatError ? errorColor : borderColor
     border.width: 1
     clip: true
 
     function authenticated() {
-        return backend && backend.codexAuthState === "authenticated"
+        return backend && backend.ai.codexAuthState === "authenticated"
     }
 
     function providerName() {
-        return backend && backend.aiChatProviderName ? backend.aiChatProviderName : "AI"
+        return backend && backend.ai.aiChatProviderName ? backend.ai.aiChatProviderName : "AI"
     }
 
     function busy() {
-        return backend && (["sending", "streaming", "stopping"].indexOf(backend.codexChatState) >= 0
-            || ["starting", "authenticating", "running"].indexOf(backend.codexState) >= 0
-            || ["starting", "authenticating", "running"].indexOf(backend.audioMixProposalState) >= 0)
+        return backend && (["sending", "streaming", "stopping"].indexOf(backend.ai.codexChatState) >= 0
+            || ["starting", "authenticating", "running"].indexOf(backend.ai.codexState) >= 0
+            || ["starting", "authenticating", "running"].indexOf(backend.audio.audioMixProposalState) >= 0)
     }
 
     function authStateLabel() {
         if (!backend)
             return "状態を確認中"
-        if (backend.codexConnectionState === "connecting")
+        if (backend.ai.codexConnectionState === "connecting")
             return "接続中"
-        if (backend.codexConnectionState === "disconnected")
+        if (backend.ai.codexConnectionState === "disconnected")
             return "切断"
-        if (backend.codexConnectionState === "error")
+        if (backend.ai.codexConnectionState === "error")
             return "接続エラー"
         var labels = {
             "checking": "認証を確認中",
             "logging_in": "ログイン開始中",
             "login_pending": "ログイン待ち",
-            "authenticated": backend.codexAuthLabel || "ログイン済み",
+            "authenticated": backend.ai.codexAuthLabel || "ログイン済み",
             "unauthenticated": "未ログイン",
             "error": "認証エラー"
         }
-        return labels[String(backend.codexAuthState || "")] || "状態を確認中"
+        return labels[String(backend.ai.codexAuthState || "")] || "状態を確認中"
     }
 
     function chatStateLabel() {
@@ -69,14 +69,14 @@ Rectangle {
             "disconnected": "接続が切れました",
             "idle": "待機中"
         }
-        return labels[String(backend.codexChatState || "")] || ""
+        return labels[String(backend.ai.codexChatState || "")] || ""
     }
 
     function syncModelSelection() {
         if (!backend || modelCombo.count === 0)
             return
         for (var index = 0; index < modelCombo.count; ++index) {
-            if (modelCombo.valueAt(index) === backend.codexSelectedModel) {
+            if (modelCombo.valueAt(index) === backend.ai.codexSelectedModel) {
                 modelCombo.currentIndex = index
                 return
             }
@@ -88,7 +88,7 @@ Rectangle {
         if (!backend || providerCombo.count === 0)
             return
         for (var index = 0; index < providerCombo.count; ++index) {
-            if (providerCombo.valueAt(index) === backend.aiChatProviderId) {
+            if (providerCombo.valueAt(index) === backend.ai.aiChatProviderId) {
                 providerCombo.currentIndex = index
                 return
             }
@@ -101,78 +101,64 @@ Rectangle {
         anchors.margins: 8
         spacing: 7
 
-        RowLayout {
+        ColumnLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 30
-            spacing: 6
+            Layout.minimumWidth: 0
+            spacing: 4
 
-            Text {
-                text: panel.providerName() + "チャット"
-                textFormat: Text.PlainText
-                color: panel.textColor
-                font.family: "Yu Gothic UI"
-                font.pixelSize: 12
-                font.weight: Font.Bold
-            }
-            ComboBox {
-                id: providerCombo
-                objectName: "aiProviderHeaderCombo"
-                Layout.preferredWidth: 88
-                Layout.minimumWidth: 70
-                model: backend ? backend.aiChatProviders : []
-                textRole: "label"
-                valueRole: "id"
-                enabled: backend && !panel.busy() && backend.aiChatProviders.length > 0
-                Component.onCompleted: panel.syncProviderSelection()
-                onActivated: backend.selectAIProvider(currentValue)
-            }
-            Text {
+            RowLayout {
                 Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                text: panel.authStateLabel()
-                textFormat: Text.PlainText
-                color: backend && ["error", "disconnected"].indexOf(backend.codexConnectionState) >= 0
-                    ? panel.errorColor : panel.mutedColor
-                font.family: "Yu Gothic UI"
-                font.pixelSize: 9
-                horizontalAlignment: Text.AlignRight
-                elide: Text.ElideRight
-            }
-            SmallButton {
-                id: connectionButton
-                objectName: "codexConnectButton"
-                Layout.preferredWidth: connectionButton.text === "ブラウザを開く" ? 84 : 62
-                Layout.minimumWidth: connectionButton.text === "ブラウザを開く" ? 84 : 62
-                Layout.maximumWidth: connectionButton.text === "ブラウザを開く" ? 84 : 62
-                Layout.preferredHeight: 30
-                Layout.maximumHeight: 30
-                visible: !panel.authenticated()
-                    && (!backend || backend.aiChatLoginAvailable)
-                text: backend && backend.codexAuthState === "login_pending"
-                    ? "ブラウザを開く"
-                    : (backend && ["error", "disconnected"].indexOf(backend.codexConnectionState) >= 0
-                        ? "再接続" : "ログイン")
-                enabled: backend && backend.codexConnectionState !== "connecting"
-                    && backend.codexAuthState !== "logging_in"
-                onClicked: {
-                    if (backend.codexAuthState === "login_pending")
-                        backend.openAIProviderLoginPage()
-                    else if (["error", "disconnected"].indexOf(backend.codexConnectionState) >= 0)
-                        backend.reconnectAIChat()
-                    else
-                        backend.startAIProviderLogin()
+                spacing: 6
+                Text {
+                    text: panel.providerName() + "チャット"
+                    textFormat: Text.PlainText
+                    color: panel.textColor
+                    font.family: "Yu Gothic UI"
+                    font.pixelSize: 12
+                    font.weight: Font.Bold
+                }
+                Item { Layout.fillWidth: true }
+                SmallButton {
+                    objectName: "codexChatToggleButton"
+                    Layout.preferredWidth: 48
+                    Layout.minimumWidth: 48
+                    Layout.maximumWidth: 48
+                    Layout.preferredHeight: 30
+                    Layout.maximumHeight: 30
+                    text: panel.expanded ? "閉じる" : "開く"
+                    enabled: panel.authenticated()
+                    onClicked: panel.expanded = !panel.expanded
                 }
             }
-            SmallButton {
-                objectName: "codexChatToggleButton"
-                Layout.preferredWidth: 48
-                Layout.minimumWidth: 48
-                Layout.maximumWidth: 48
-                Layout.preferredHeight: 30
-                Layout.maximumHeight: 30
-                text: panel.expanded ? "閉じる" : "開く"
-                enabled: panel.authenticated()
-                onClicked: panel.expanded = !panel.expanded
+            RowLayout {
+                visible: panel.expanded
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                spacing: 6
+                ComboBox {
+                    id: providerCombo
+                    objectName: "aiProviderHeaderCombo"
+                    Layout.preferredWidth: 88
+                    Layout.minimumWidth: 70
+                    model: backend ? backend.ai.aiChatProviders : []
+                    textRole: "label"
+                    valueRole: "id"
+                    enabled: backend && !panel.busy() && backend.ai.aiChatProviders.length > 0
+                    Component.onCompleted: panel.syncProviderSelection()
+                    onActivated: backend.ai.selectAIProvider(currentValue)
+                }
+                Text {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    text: panel.authStateLabel()
+                    textFormat: Text.PlainText
+                    color: backend && ["error", "disconnected"].indexOf(backend.ai.codexConnectionState) >= 0
+                        ? panel.errorColor : panel.mutedColor
+                    font.family: "Yu Gothic UI"
+                    font.pixelSize: 9
+                    horizontalAlignment: Text.AlignRight
+                    elide: Text.ElideRight
+                }
             }
         }
 
@@ -190,16 +176,16 @@ Rectangle {
                     objectName: "codexModelCombo"
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    model: backend ? backend.codexModels : []
+                    model: backend ? backend.ai.codexModels : []
                     textRole: "label"
                     valueRole: "id"
-                    visible: backend && backend.aiChatModelSelectionSupported
-                    enabled: visible && backend.codexModels.length > 0 && !panel.busy()
+                    visible: backend && backend.ai.aiChatModelSelectionSupported
+                    enabled: visible && backend.ai.codexModels.length > 0 && !panel.busy()
                     Component.onCompleted: panel.syncModelSelection()
-                    onActivated: backend.selectCodexModel(currentValue)
+                    onActivated: backend.ai.selectCodexModel(currentValue)
                 }
                 Text {
-                    visible: backend && !backend.aiChatModelSelectionSupported
+                    visible: backend && !backend.ai.aiChatModelSelectionSupported
                     text: "プロバイダ既定"
                     color: panel.textColor
                     font.pixelSize: 9
@@ -211,7 +197,7 @@ Rectangle {
                     Layout.maximumWidth: 48
                     text: "新規"
                     enabled: !panel.busy()
-                    onClicked: backend.startNewCodexChat()
+                    onClicked: backend.ai.startNewCodexChat()
                 }
             }
 
@@ -244,7 +230,7 @@ Rectangle {
                     Layout.minimumWidth: 0
                     text: panel.chatStateLabel()
                     textFormat: Text.PlainText
-                    color: backend && backend.codexChatState === "send_failed" ? panel.errorColor : panel.mutedColor
+                    color: backend && backend.ai.codexChatState === "send_failed" ? panel.errorColor : panel.mutedColor
                     font.pixelSize: 9
                 }
                 SmallButton {
@@ -254,7 +240,7 @@ Rectangle {
                     Layout.maximumWidth: 68
                     text: "再ログイン"
                     enabled: !panel.busy()
-                    onClicked: backend.reloginAIProvider()
+                    onClicked: backend.ai.reloginAIProvider()
                 }
                 SmallButton {
                     objectName: "codexLogoutButton"
@@ -265,7 +251,7 @@ Rectangle {
                     enabled: !panel.busy()
                     onClicked: {
                         panel.expanded = false
-                        backend.logoutAIProvider()
+                        backend.ai.logoutAIProvider()
                     }
                 }
             }
@@ -277,7 +263,7 @@ Rectangle {
                 Layout.fillHeight: true
                 clip: true
                 spacing: 6
-                model: backend ? backend.codexChatMessages : []
+                model: backend ? backend.ai.codexChatMessages : []
                 delegate: Rectangle {
                     id: messageDelegate
                     required property var modelData
@@ -308,14 +294,15 @@ Rectangle {
             CodexEditPanel {
                 objectName: "codexChatProposalCard"
                 Layout.fillWidth: true
+                Layout.minimumWidth: 0
                 Layout.preferredHeight: implicitHeight
                 backend: panel.backend
             }
 
             Text {
                 Layout.fillWidth: true
-                visible: backend && (backend.codexModelError || backend.codexChatError)
-                text: backend ? (backend.codexModelError || backend.codexChatError) : ""
+                visible: backend && (backend.ai.codexModelError || backend.ai.codexChatError)
+                text: backend ? (backend.ai.codexModelError || backend.ai.codexChatError) : ""
                 textFormat: Text.PlainText
                 color: panel.errorColor
                 font.family: "Yu Gothic UI"
@@ -325,8 +312,8 @@ Rectangle {
 
             Text {
                 Layout.fillWidth: true
-                visible: backend && backend.aiChatAuthHint
-                text: backend ? backend.aiChatAuthHint : ""
+                visible: backend && backend.ai.aiChatAuthHint
+                text: backend ? backend.ai.aiChatAuthHint : ""
                 textFormat: Text.PlainText
                 color: panel.mutedColor
                 font.family: "Yu Gothic UI"
@@ -385,13 +372,14 @@ Rectangle {
                         enabled: panel.authenticated() && !panel.busy() && chatInput.text.trim().length > 0
                         onClicked: {
                             var message = chatInput.text
-                            chatInput.clear()
-                            backend.sendCodexChatMessage(
+                            var accepted = backend.ai.sendCodexChatMessage(
                                 message,
                                 editScope.currentValue,
                                 Number(rangeStart.text || 0),
                                 Number(rangeEnd.text || 0)
                             )
+                            if (accepted)
+                                chatInput.clear()
                         }
                     }
                     SmallButton {
@@ -400,8 +388,8 @@ Rectangle {
                         Layout.minimumWidth: 48
                         Layout.maximumWidth: 48
                         text: "停止"
-                        enabled: panel.busy() && backend.codexChatState !== "stopping"
-                        onClicked: backend.stopCodexChat()
+                        enabled: panel.busy() && backend.ai.codexChatState !== "stopping"
+                        onClicked: backend.ai.stopCodexChat()
                     }
                 }
             }
@@ -409,7 +397,7 @@ Rectangle {
     }
 
     Connections {
-        target: backend
+        target: backend ? backend.ai : null
         function onCodexChatChanged() {
             panel.syncProviderSelection()
             panel.syncModelSelection()

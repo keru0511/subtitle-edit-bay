@@ -12,6 +12,7 @@ from src.editor_workspace import EditorWorkspaceState
 from src.gui import EditBayBackend
 from src.gui_state import SourceSelection
 from src.gui_workspace_controller import WorkspaceNavigationController
+from src.gui_workflow_facade import WorkflowRuntimeState
 from src.runtime_dependencies import RuntimeDependencyStatus
 
 
@@ -55,17 +56,14 @@ class EditBayGuiTestSession:
         app._selected_segment_index = -1
         app._project_revision = 0
         app._sync_subtitle_model()
-        app._cut_editor_available = True
-        app._editor_workspace = EditorWorkspaceState()
-        app._workspace_navigation = WorkspaceNavigationController()
-        app._sequence_playhead_seconds = 0.0
-        app._sequence_error = ""
+        app.workspace._cut_editor_available = True
+        app.workspace._editor_workspace = EditorWorkspaceState()
+        app.workspace._workspace_navigation = WorkspaceNavigationController()
+        app.sequence._playhead_seconds = 0.0
+        app.sequence._error = ""
 
         app._active_job = ""
-        app._processing_progress.start("")
-        app._ffmpeg_duration_seconds = 0.0
-        app._ffmpeg_duration_from_event = False
-        app._processing_machine_event_seen = False
+        app.workflow._state = WorkflowRuntimeState()
         app._ass_path = ""
         app._loading_project_sources = False
         app._relinking_project_sources = False
@@ -91,9 +89,6 @@ class EditBayGuiTestSession:
         app._progress = 0.0
         app._log = ""
         app._application_logger.clear_memory()
-        app._last_process_diagnostic = None
-        app._pending_process_error = ""
-        app._process_output_tail = ""
         app._elapsed_seconds = 0
         app._cancel_requested = False
 
@@ -102,11 +97,6 @@ class EditBayGuiTestSession:
         app._autosave_path = ""
         app._autosave_pending = False
         app._ignored_autosaves.clear()
-        app._transcription_merge_mode = ""
-        app._transcription_preserved_segments = []
-        app._transcription_preserved_project = None
-        app._transcription_preserved_project_path = ""
-        app._transcription_generated_project_path = ""
 
         app._audio_preview_cache_request += 1
         app._audio_preview_cache_paths.clear()
@@ -119,24 +109,24 @@ class EditBayGuiTestSession:
         app._audio_master_level = 0.0
         app._audio_limiter_reduction_db = 0.0
 
-        app._highlight_generation += 1
-        app._highlight_cancel = threading.Event()
-        app._highlight_candidates = []
-        app._highlight_rejected = []
-        app._highlight_status = "idle"
-        app._highlight_progress = 0.0
+        app.shortVideo._highlight_state.generation += 1
+        app.shortVideo._highlight_state.cancel = threading.Event()
+        app.shortVideo._highlight_state.candidates = []
+        app.shortVideo._highlight_state.rejected = []
+        app.shortVideo._highlight_state.status = "idle"
+        app.shortVideo._highlight_state.progress = 0.0
 
-        app._update_info = None
-        app._update_error = ""
-        app._update_busy = False
-        app._update_package_path = None
-        app._update_package_sha256 = ""
-        app._update_package_ready = False
-        app._update_download_bytes = 0
-        app._update_download_total = 0
-        app._update_download_speed = 0.0
-        app._update_download_active = False
-        app._update_download_cancel = threading.Event()
+        app.updates._state.info = None
+        app.updates._state.error = ""
+        app.updates._state.busy = False
+        app.updates._state.package_path = None
+        app.updates._state.package_sha256 = ""
+        app.updates._state.package_ready = False
+        app.updates._state.download_bytes = 0
+        app.updates._state.download_total = 0
+        app.updates._state.download_speed = 0.0
+        app.updates._state.download_active = False
+        app.updates._state.download_cancel = threading.Event()
 
         app._codex_proposal = None
         app._codex_current_time = None
@@ -160,9 +150,9 @@ class EditBayGuiTestSession:
         app.elapsed_timer.stop()
         app._audio_preview_level_timer.stop()
         app._audio_master_mixer.stop()
-        app._highlight_cancel.set()
-        app._highlight_generation += 1
-        app._update_download_cancel.set()
+        app.shortVideo._highlight_state.cancel.set()
+        app.shortVideo._highlight_state.generation += 1
+        app.updates._state.download_cancel.set()
         self._stop_codex_session()
 
         if app._autosave_future is not None:

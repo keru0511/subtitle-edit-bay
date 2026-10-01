@@ -5,10 +5,12 @@ from hashlib import sha256
 import math
 from pathlib import Path, PureWindowsPath
 import re
-from typing import Any, Iterable, Mapping, cast
+from collections.abc import Iterable, Mapping
+from typing import TypedDict
 from uuid import uuid4
 
 from .application_logging import redact_text
+from .data_boundary import coerce_float, is_object_dict, is_object_mapping, is_object_sequence, is_object_iterable
 
 
 AUDIO_MIX_VERSION = 1
@@ -26,13 +28,29 @@ AUDIO_CHANNEL_CHANGE_FIELDS = frozenset({"volume_percent", "muted", "solo", "ena
 _AUDIO_CHANNEL_ID_PATTERN = re.compile(r"audio:[0-9a-f]{32}\Z")
 
 
+class AudioMixPayload(TypedDict):
+    version: int
+    customized: bool
+    channels: list[dict[object, object]]
+
+
+class AudioChannelView(TypedDict):
+    id: str
+    kind: str
+    label: str
+    enabled: bool
+    muted: bool
+    solo: bool
+    volume_percent: float
+
+
 class AudioMixError(ValueError):
     """Raised when a mixer update cannot be validated or applied."""
 
 
 def _clamp_volume(value: object) -> float:
     try:
-        numeric = float(cast(Any, value))
+        numeric = coerce_float(value)
     except (TypeError, ValueError, OverflowError):
         numeric = 100.0
     if not math.isfinite(numeric):
@@ -54,7 +72,7 @@ def _video_channel_id(selector: str) -> str:
 
 
 def _external_channel_id(
-    source: dict[str, Any],
+    source: dict[object, object],
     index: int,
     used_ids: set[str],
 ) -> str:
@@ -75,7 +93,7 @@ def _external_channel_id(
     return candidate
 
 
-def _legacy_external_channel_id(source: Mapping[str, Any], index: int) -> str:
+def _legacy_external_channel_id(source: Mapping[object, object], index: int) -> str:
     identity = str(source.get("track_key") or source.get("path") or source.get("file_name") or index)
     return f"external:{identity}"
 
@@ -92,13 +110,13 @@ def _safe_channel_label(value: object, fallback: str) -> str:
     return fallback if not label or _looks_like_absolute_path(label) else label
 
 
-def validate_audio_channel_changes(changes: object) -> dict[str, Any]:
-    if not isinstance(changes, Mapping) or not changes:
+def validate_audio_channel_changes(changes: object) -> dict[str, float | bool]:
+    if not is_object_mapping(changes) or not changes:
         raise AudioMixError("audio channel changes must be a non-empty object")
     unknown = sorted(str(key) for key in changes if not isinstance(key, str) or key not in AUDIO_CHANNEL_CHANGE_FIELDS)
     if unknown:
         raise AudioMixError("unsupported audio channel fields: " + ", ".join(unknown))
-    validated: dict[str, Any] = {}
+    validated: dict[str, float | bool] = {}
     for key in AUDIO_CHANNEL_CHANGE_FIELDS:
         if key not in changes:
             continue
@@ -118,42 +136,41 @@ def validate_audio_channel_changes(changes: object) -> dict[str, Any]:
 
 
 def update_audio_mix_channel(
-    audio_mix: Mapping[str, Any],
+    audio_mix: object,
     channel_id: str,
     changes: object,
-) -> dict[str, Any]:
+) -> dict[object, object]:
     """Apply one validated channel update to a copy of the canonical mixer state."""
 
     if not isinstance(channel_id, str) or not is_opaque_audio_channel_id(channel_id):
         raise AudioMixError("audio channel id must be a safe opaque ID")
     validated = validate_audio_channel_changes(changes)
-    candidate = deepcopy(dict(audio_mix))
+    candidate = deepcopy(dict(_mapping(audio_mix, "audio_mix")))
     channels = candidate.get("channels")
-    if not isinstance(channels, list):
+    if not isinstance(channels, list) or not is_object_sequence(channels):
         raise AudioMixError("audio mix channels must be an array")
-    matches = [
-        channel for channel in channels if isinstance(channel, dict) and str(channel.get("id", "")) == channel_id
-    ]
+    matches = [channel for channel in channels if is_object_dict(channel) and str(channel.get("id", "")) == channel_id]
     if len(matches) != 1:
         raise AudioMixError(f"audio channel does not exist or is ambiguous: {channel_id}")
     matches[0].update(validated)
     candidate["customized"] = True
     return candidate
 
-def _path_free_channel_id(channel: dict[str, Any]) -> str:
+
+def _path_free_channel_id(channel: dict[object, object]) -> str:
     channel_id = str(channel.get("id", "")).strip()
     if not is_opaque_audio_channel_id(channel_id):
         raise ValueError("audio channel identity is not a safe opaque ID")
     return channel_id
 
 
-def path_free_audio_mix_channels(channels: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+def path_free_audio_mix_channels(channels: Iterable[object]) -> list[AudioChannelView]:
     """Build the shared Codex-facing audio view from normalized mixer channels."""
 
-    safe: list[dict[str, Any]] = []
+    safe: list[AudioChannelView] = []
     channel_ids: set[str] = set()
     for index, channel in enumerate(channels):
-        if not isinstance(channel, dict):
+        if not is_object_dict(channel):
             continue
         channel_id = _path_free_channel_id(channel)
         if channel_id in channel_ids:
@@ -180,12 +197,13 @@ def path_free_audio_mix_channels(channels: Iterable[dict[str, Any]]) -> list[dic
     return safe
 
 
-def video_track_entries(streams: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
+def video_track_entries(streams: Iterable[object]) -> list[dict[str, str]]:
     entries: list[dict[str, str]] = []
-    for audio_index, stream in enumerate(streams):
+    for audio_index, raw_stream in enumerate(streams):
+        stream = _mapping(raw_stream, "audio stream")
         selector = f"0:a:{audio_index}"
         raw_tags = stream.get("tags")
-        tags: dict[str, Any] = raw_tags if isinstance(raw_tags, dict) else {}
+        tags: dict[object, object] = raw_tags if is_object_dict(raw_tags) else {}
         title = str(tags.get("title", "")).strip()
         codec = str(stream.get("codec_name", "audio"))
         channels = stream.get("channels", "?")
@@ -193,7 +211,7 @@ def video_track_entries(streams: Iterable[dict[str, Any]]) -> list[dict[str, str
     return entries
 
 
-def _normalized_channel(channel: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
+def _normalized_channel(channel: dict[object, object], defaults: dict[object, object]) -> dict[object, object]:
     normalized = {**defaults, **deepcopy(channel)}
     normalized["id"] = str(defaults["id"])
     normalized["kind"] = str(defaults["kind"])
@@ -215,30 +233,36 @@ def _normalized_channel(channel: dict[str, Any], defaults: dict[str, Any]) -> di
 
 
 def reconcile_audio_mix(
-    project: dict[str, Any],
-    video_tracks: Iterable[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
+    project: object,
+    video_tracks: Iterable[object] | None = None,
+) -> AudioMixPayload:
+    if not is_object_dict(project):
+        raise AudioMixError("project must be an object")
     raw_current = project.get("audio_mix")
-    current: dict[str, Any] = raw_current if isinstance(raw_current, dict) else {}
+    current: dict[object, object] = raw_current if is_object_dict(raw_current) else {}
     raw_existing_channels = current.get("channels")
-    existing_channels: list[Any] = raw_existing_channels if isinstance(raw_existing_channels, list) else []
+    existing_channels = (
+        raw_existing_channels
+        if isinstance(raw_existing_channels, list) and is_object_sequence(raw_existing_channels)
+        else ()
+    )
     existing_by_id = {
         str(channel.get("id")): channel
         for channel in existing_channels
-        if isinstance(channel, dict) and channel.get("id")
+        if is_object_dict(channel) and channel.get("id")
     }
     existing_video = [
-        channel for channel in existing_channels if isinstance(channel, dict) and channel.get("kind") == "video"
+        channel for channel in existing_channels if is_object_dict(channel) and channel.get("kind") == "video"
     ]
     existing_external = [
-        channel for channel in existing_channels if isinstance(channel, dict) and channel.get("kind") == "external"
+        channel for channel in existing_channels if is_object_dict(channel) and channel.get("kind") == "external"
     ]
     claimed_existing: set[int] = set()
 
-    def existing_channel(*ids: str, kind: str, path: str = "") -> dict[str, Any]:
+    def existing_channel(*ids: str, kind: str, path: str = "") -> dict[object, object]:
         for channel_id in ids:
             candidate = existing_by_id.get(channel_id)
-            if isinstance(candidate, dict) and id(candidate) not in claimed_existing and candidate.get("kind") == kind:
+            if is_object_dict(candidate) and id(candidate) not in claimed_existing and candidate.get("kind") == kind:
                 claimed_existing.add(id(candidate))
                 return candidate
         if kind == "external" and path:
@@ -248,12 +272,14 @@ def reconcile_audio_mix(
                     return candidate
         return {}
 
-    supplied_tracks = None if video_tracks is None else list(video_tracks)
+    supplied_tracks = None if video_tracks is None else [_mapping(track, "video track") for track in video_tracks]
     preserve_external = (
         supplied_tracks is None or bool(existing_video) or (not supplied_tracks and bool(existing_external))
     )
 
-    preferred_selector = str(project.get("render_settings", {}).get("output_audio_track") or DEFAULT_AUDIO_TRACK)
+    preferred_selector = str(
+        _mapping(project.get("render_settings", {}), "render_settings").get("output_audio_track") or DEFAULT_AUDIO_TRACK
+    )
     if supplied_tracks is None:
         track_entries = [
             {"selector": str(channel.get("selector", "")), "label": str(channel.get("label", ""))}
@@ -275,13 +301,13 @@ def reconcile_audio_mix(
         if preferred_selector in selectors
         else (track_entries[0]["selector"] if track_entries else "")
     )
-    channels: list[dict[str, Any]] = []
+    channels: list[dict[object, object]] = []
     used_channel_ids: set[str] = set()
     for entry in track_entries:
         selector = entry["selector"]
         channel_id = _video_channel_id(selector)
         used_channel_ids.add(channel_id)
-        defaults = {
+        defaults: dict[object, object] = {
             "id": channel_id,
             "kind": "video",
             "label": entry["label"] or selector,
@@ -298,8 +324,8 @@ def reconcile_audio_mix(
             )
         )
 
-    for index, source in enumerate(project.get("audio_sources", [])):
-        if not isinstance(source, dict) or not str(source.get("path", "")).strip():
+    for index, source in enumerate(_items(project.get("audio_sources", []), "audio_sources")):
+        if not is_object_dict(source) or not str(source.get("path", "")).strip():
             continue
         channel_id = _external_channel_id(source, index, used_channel_ids)
         speaker_name = _safe_channel_label(
@@ -336,7 +362,7 @@ def reconcile_audio_mix(
                     channel["enabled"] = True
                     break
 
-    audio_mix = {
+    audio_mix: AudioMixPayload = {
         "version": AUDIO_MIX_VERSION,
         "customized": bool(current.get("customized", False)),
         "channels": channels,
@@ -346,25 +372,28 @@ def reconcile_audio_mix(
 
 
 def reset_audio_mix(
-    project: dict[str, Any],
-    video_tracks: Iterable[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
+    project: object,
+    video_tracks: Iterable[object] | None = None,
+) -> AudioMixPayload:
+    if not is_object_dict(project):
+        raise AudioMixError("project must be an object")
     project.pop("audio_mix", None)
     return reconcile_audio_mix(project, video_tracks)
 
 
-def active_audio_mix_channels(audio_mix: dict[str, Any]) -> list[dict[str, Any]]:
+def active_audio_mix_channels(audio_mix: object) -> list[dict[object, object]]:
+    audio_mix = _mapping(audio_mix, "audio_mix")
     enabled = [
         deepcopy(channel)
-        for channel in audio_mix.get("channels", [])
-        if isinstance(channel, dict) and bool(channel.get("enabled")) and not bool(channel.get("muted"))
+        for channel in _items(audio_mix.get("channels", []), "audio_mix.channels")
+        if is_object_dict(channel) and bool(channel.get("enabled")) and not bool(channel.get("muted"))
     ]
     solo = [channel for channel in enabled if bool(channel.get("solo"))]
     return solo or enabled
 
 
 def build_audio_mix_filter(
-    audio_mix: dict[str, Any],
+    audio_mix: object,
     *,
     offset_seconds: float = 0.0,
     output_label: str = "mixed_audio",
@@ -401,10 +430,18 @@ def build_audio_mix_filter(
         filters.append(
             f"{''.join(branch_labels)}amix=inputs={len(branch_labels)}:duration=longest:dropout_transition=0:normalize=0[{base_label}]"
         )
-    final_filter = (
-        f"{post_filter},{AUDIO_MIX_MASTER_FILTER},apad"
-        if post_filter
-        else f"{AUDIO_MIX_MASTER_FILTER},apad"
-    )
+    final_filter = f"{post_filter},{AUDIO_MIX_MASTER_FILTER},apad" if post_filter else f"{AUDIO_MIX_MASTER_FILTER},apad"
     filters.append(f"[{base_label}]{final_filter}[{output_label}]")
     return input_args, ";".join(filters)
+
+
+def _mapping(value: object, field: str) -> Mapping[object, object]:
+    if not is_object_mapping(value):
+        raise AudioMixError(f"{field} must be an object")
+    return value
+
+
+def _items(value: object, field: str) -> Iterable[object]:
+    if not is_object_iterable(value):
+        raise AudioMixError(f"{field} must be iterable")
+    return value

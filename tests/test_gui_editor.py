@@ -59,6 +59,7 @@ from src.gui_codex_state import CodexSessionSnapshot
 from src.gui_state import SourceSelection
 from src.gui_transcription_context_state import gui_transcription_context_state_from_config
 from src.runtime_dependencies import RuntimeDependencyStatus
+from src.highlight_candidates import HighlightCandidate
 from src.short_video_schema import ShortVideo
 from src.short_video_timeline import build_short_video_timeline
 from src.subtitle_project import (
@@ -13989,6 +13990,18 @@ Window {
         self.app.highlightAnalysisChanged.emit()
         self.app.processEvents()
 
+        for analysis_status in ("running", "cancelling"):
+            state.status = analysis_status
+            self.app.highlightAnalysisChanged.emit()
+            self.assertFalse(self.app.addHighlightCandidate(0))
+            self.assertFalse(self.app.rejectHighlightCandidate(0))
+            self.assertFalse(self.app.undoHighlightRejection())
+            self.assertEqual(state.candidates, [candidate])
+            self.assertEqual(state.rejected, [rejected])
+        state.status = "completed"
+        self.app.highlightAnalysisChanged.emit()
+        self.app.processEvents()
+
         candidate_list = self._quick_item(window, "highlightCandidateListView")
 
         def candidate_buttons() -> tuple[QObject, QObject]:
@@ -14062,14 +14075,18 @@ Window {
         self.gui.wait_until(lambda: _qt_bool(add, "enabled"), description="failed retry restores candidate action")
         self.assertTrue(_qt_bool(reject, "enabled"))
 
-        replacement = {
-            "id": "new-generation",
-            "start": 1.0,
-            "end": 2.0,
-            "score": 0.9,
-            "source_segment_ids": ["segment-a"],
-        }
-        generated = type("Candidate", (), {"to_json": lambda _self: replacement})()
+        generated = HighlightCandidate(
+            id="new-generation",
+            start=1.0,
+            end=2.0,
+            score=0.9,
+            category="emphasis",
+            reason="test replacement",
+            subtitle_excerpt="replacement",
+            source_segment_ids=("segment-a",),
+            score_breakdown={},
+        )
+        replacement = generated.to_json()
         with patch(
             "src.highlight_candidates.generate_highlight_candidates",
             return_value=[generated],

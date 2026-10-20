@@ -60,6 +60,11 @@ Linux用のバージョンは `requirements.in` で宣言します。最初の�
 成功したCIで使用したBudouX 0.9.3、PySide6 6.11.2、mypy 2.3.1、Ruff 0.16.9を採用しました。
 Windows用lockをLinux用制約に変換する経路はありません。
 
+`--torch-backend cpu` が選ぶtorch・torchaudio・torchvision・tritonは、共通lockから
+機械的に抽出してPyTorchのCPU indexから取得します。残りはPyPIから取得します。
+同じバージョン・ファイル名でも配布元の異なるTriton wheelはハッシュが異なるため、
+取得元も共有し、ハッシュ照合を必須にします。
+
 Python 3.10.22 / uv 0.12.23を用意したLinuxで、リポジトリルートから再生成します。
 既存lockのバージョンを維持する場合は `--upgrade` を付けません。
 

@@ -13,8 +13,8 @@ RUN --mount=type=secret,id=proxy_ca \
 COPY runtime/linux-dev/requirements.lock /opt/linux-dev/requirements.lock
 RUN --mount=type=secret,id=proxy_ca \
     if [ -f /run/secrets/proxy_ca ]; then export PIP_CERT=/run/secrets/proxy_ca; fi; \
-    awk '/^[^[:space:]]/ { keep = $0 ~ /^(torch|torchaudio|torchvision)==/; if (keep) count++ } \
-        keep; END { if (count != 3) exit 1 }' /opt/linux-dev/requirements.lock > /tmp/torch.lock \
+    awk '/^[^[:space:]]/ { keep = $0 ~ /^(torch|torchaudio|torchvision|triton)==/; if (keep) count++ } \
+        keep; END { if (count != 4) exit 1 }' /opt/linux-dev/requirements.lock > /tmp/torch.lock \
     && python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
         --require-hashes --only-binary=:all: --no-deps -r /tmp/torch.lock \
     && python -m pip install --no-cache-dir --index-url https://pypi.org/simple \

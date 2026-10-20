@@ -3,7 +3,7 @@ linux_repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 source "$linux_repo_root/runtime/linux-dev/toolchain.env"
 linux_state_dir="$linux_repo_root/.local/linux-dev"
 export VIRTUAL_ENV="$linux_repo_root/.venv"
-export PATH="$VIRTUAL_ENV/bin:$linux_state_dir/ffmpeg-$FFMPEG_BUILD/bin:$linux_state_dir/node-$NODE_VERSION/bin:$linux_state_dir/uv-$UV_VERSION:$PATH"
+export PATH="$linux_state_dir/ffmpeg-$FFMPEG_BUILD/bin:$linux_state_dir/node-$NODE_VERSION/bin:$linux_state_dir/uv-$UV_VERSION:$VIRTUAL_ENV/bin:$PATH"
 export LD_LIBRARY_PATH="$linux_state_dir/ffmpeg-$FFMPEG_BUILD/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export UV_CACHE_DIR="$linux_state_dir/cache/uv"
 export UV_PYTHON_INSTALL_DIR="$linux_state_dir/python"

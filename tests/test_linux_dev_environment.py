@@ -78,11 +78,17 @@ class LinuxSetupTests(TypedTestCase):
     def test_activation_selects_repository_tools_from_another_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self._copy_setup(directory)
+            uv_version = self._settings(root)["UV_VERSION"]
+            pinned_uv = root / ".local/linux-dev" / ("uv-" + uv_version) / "uv"
+            for executable in (root / ".venv/bin/python", root / ".venv/bin/uv", pinned_uv):
+                executable.parent.mkdir(parents=True, exist_ok=True)
+                executable.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+                executable.chmod(0o755)
             result = subprocess.run(
                 [
                     "bash",
                     "-ec",
-                    'source "$1"; printf "%s\\n" "$VIRTUAL_ENV" "${PATH%%:*}" "${LD_LIBRARY_PATH%%:*}" "$QT_QPA_PLATFORM"',
+                    'source "$1"; printf "%s\\n" "$VIRTUAL_ENV" "$(command -v python)" "${LD_LIBRARY_PATH%%:*}" "$QT_QPA_PLATFORM" "$(command -v uv)"',
                     "bash",
                     str(root / "runtime/linux-dev/env.sh"),
                 ],
@@ -93,9 +99,10 @@ class LinuxSetupTests(TypedTestCase):
                 check=True,
             )
             lines = result.stdout.splitlines()
-            self.assertEqual(lines[:2], [str(root / ".venv"), str(root / ".venv/bin")])
+            self.assertEqual(lines[:2], [str(root / ".venv"), str(root / ".venv/bin/python")])
             self.assertTrue(lines[2].startswith(str(root / ".local/linux-dev/ffmpeg-")))
             self.assertEqual(lines[3], "offscreen")
+            self.assertEqual(lines[4], str(pinned_uv))
 
     def test_hash_mismatch_stops_before_installing_or_reusing_a_stale_download(self) -> None:
         for cached in (False, True):

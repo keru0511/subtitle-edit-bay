@@ -4,10 +4,9 @@ This repository uses a staged quality gate. The first enforced gate is intention
 
 ## Local commands
 
-Linux・クラウドでは [CI共通環境](../runtime/linux-dev/README.md) を使用します。
-`bash scripts/linux_dev.sh quality` が通常CIと同じ品質検証、
-`bash scripts/linux_dev.sh test` がdiscovery・単体・Qt・FFmpeg・GUI起動検証です。
-以下の `python ...` はLinuxでは共通コンテナ内で実行してください。
+Linux・クラウドでは `bash scripts/setup_linux.sh` の後、
+`source runtime/linux-dev/env.sh` を実行してから以下の検証コマンドを使用します。
+依存の個別インストールは不要です。[共通環境の手順](../runtime/linux-dev/README.md) を参照してください。
 
 Install runtime dependencies:
 

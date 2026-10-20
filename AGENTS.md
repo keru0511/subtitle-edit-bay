@@ -11,23 +11,17 @@
 例: `src/subtitles/render_ass.py` を作ったら、`tests/subtitles/test_render_ass.py` を追加します。
 
 ## Build, Test, and Development Commands
-
-### Linux CI・クラウド開発
-
-LinuxのPython・GUI・テストは必ず `bash scripts/linux_dev.sh <command>` で実行します。
-セットアップは `bash runtime/linux-dev/cloud-install.sh`、通常CIと同じ検証は
-`bash scripts/linux_dev.sh quality` と `bash scripts/linux_dev.sh test` です。
-ホストの `.venv` や旧 `.cloud-setup/env.sh`、Windows用lockから独自にLinux環境を作らないでください。
-依存を変更する場合は共有lockを同じPRで更新します。手順は
-[`runtime/linux-dev/README.md`](runtime/linux-dev/README.md) にあります。
-Python 3.10を使用します。作業時は次のコマンドを基本にしてください。
+Linux CI・クラウド開発では `bash scripts/setup_linux.sh` で共有環境を用意し、
+`source runtime/linux-dev/env.sh` を実行してからPython・GUI・テストを実行します。
+Python依存とFFmpeg/ffprobe・Node.jsは共有lockとツール定義に固定します。
+Windows用lockや旧 `.cloud-setup` から別のLinux環境を生成しないでください。
+依存更新時は共有lockも同じPRで更新します。手順は
+[Linux共通環境](runtime/linux-dev/README.md) を参照してください。
 
 - `git status` : 作業ツリーの確認
 - `git diff` : 変更内容の確認
-- `bash scripts/linux_dev.sh test` : Linuxのテスト全体とGUI起動確認
-- `bash scripts/linux_dev.sh python -m src.<module>` : 共通環境でのモジュール実行
-
-FFmpegやWhisperXを含む依存更新も、手順を `README` または `docs/` に固定コマンドとして残してください。
+- `python scripts/run_ci_tests.py --group portable-unit` : 単体テスト
+- `python -m src.<module>` : モジュール単位の実行
 
 ## Coding Style & Naming Conventions
 Python を使う場合は 4 スペースインデント、タブは禁止です。命名は次に統一します。

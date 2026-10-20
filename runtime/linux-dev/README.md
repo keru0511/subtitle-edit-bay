@@ -1,87 +1,75 @@
 # Linux CI・クラウド共通環境
 
-Linuxの通常CI、リリース準備のLinux検証、クラウド開発は、すべて
-`bash scripts/linux_dev.sh` から同じ `linux/amd64` コンテナへ入ります。
-ホストのPython、FFmpeg、`.venv`、Windows用lockは使用しません。
-Windows固有のCI・配布環境は、従来のWindows用ランタイム契約で検証します。
+通常CI・リリースのLinux検証・クラウド開発は、同じPython依存lockとセットアップを使います。
+Dockerは不要です。対象はDebian/Ubuntu系のLinux x86_64です。
 
-## 固定するもの
+## セットアップと検証
 
-- Python 3.10.22を含むベースイメージをdigestで固定します。
-- `apt.lock` は、ベースとFFmpeg・Node.js等の追加依存を含む全OSパッケージを固定します。
-- `requirements.lock` は、開発ツール、Qt、WhisperX、CPU版PyTorchとその推移的依存を
-  SHA-256付きで固定します。インストール時の依存解決やソースビルドは行いません。
-- `entrypoint.sh` とDockerfileで、offscreen/softwareのQt設定とスレッド数を共有します。
-
-起動時にPython・アーキテクチャ・全Python/OSパッケージの実バージョンを検証し、
-依存宣言のチェックサムも確認します。追加パッケージ、古いlock、異なるバージョンがあれば
-処理を失敗させます。WhisperXとリポジトリの `scripts` も同じプロセスでimportします。
-モデルのダウンロードや実音声の精度検証は行いません。
-
-## 起動・検証
-
-Dockerが使えるLinuxホストで、リポジトリルートから実行します。
-イメージは環境定義のハッシュで識別し、未作成の場合だけ自動ビルドします。
-ソースコードは `/workspace` にマウントし、実行ユーザーはホストと同じUID/GIDです。
+Bash、curl、tar、xz、sha256sumが必要です。Qtの基本ライブラリが未導入の場合だけ、
+aptを実行できる権限（rootまたはsudo）を使います。
 
 ```bash
-bash runtime/linux-dev/cloud-install.sh   # 作成と実環境の整合性確認
-bash scripts/linux_dev.sh quality         # CIと同じlint・3プラットフォームの型/Any検査
-bash scripts/linux_dev.sh test            # discovery→単体→Qt→FFmpeg→実GUI起動
-bash scripts/linux_dev.sh startup         # Main.qmlを読み込み、結果を確認して終了
-bash scripts/linux_dev.sh python -m src.gui
-bash scripts/linux_dev.sh python -m unittest tests.test_linux_dev_environment -v
-bash scripts/linux_dev.sh shell           # 共通環境内の対話シェル
+bash scripts/setup_linux.sh
+source runtime/linux-dev/env.sh
+python scripts/run_ci_tests.py --validate
+python scripts/check_quality.py --lint-only
+python scripts/check_quality.py --format-only --paths scripts/check_quality.py
+for platform in linux win32 darwin; do
+  python scripts/check_quality.py --type-only --type-platform "$platform"
+  python scripts/check_no_any.py --platform "$platform"
+done
+python scripts/check_unittest_discovery.py
+python scripts/run_ci_tests.py --group portable-unit
+python scripts/run_ci_tests.py --group qt-gui
+RUN_FFMPEG_SMOKE=1 python scripts/run_ci_tests.py --group ffmpeg-runtime
+bash scripts/check_gui_startup.sh
 ```
 
-`test` は各グループを別のPythonプロセスで実行します。FFmpegの実処理を有効化し、
-GUI起動は毎回新しい結果ファイルとタイムアウトで確認します。
-音声出力デバイスのない環境ではPulseAudio等の警告が出ることがあります。
-起動結果と終了コードで判定し、古い結果ファイルを成功の根拠にしません。
+`setup_linux.sh` は `.venv` を共有lockに同期します。既存の余分なPythonパッケージは除去されます。
+ツール・Python本体・キャッシュはGit管理外の `.local/linux-dev/` に置きます。
+GUI設定や動画・音声は変更しません。モデルのダウンロードは行いません。
+CIは `BASH_ENV` で同じ `env.sh` を読み、各検証ステップで同じ参照先とQt設定を使います。
 
-クラウドの環境設定に保存するインストールスクリプトは、次の呼び出しだけにします。
-従来の `.cloud-setup` での独自解決・インストールや `env.sh` のsourceを置き換えます。
+## バージョンの正本
 
-```bash
-bash /workspace/subtitle-edit-bay/runtime/linux-dev/cloud-install.sh
-```
+- `toolchain.env`: Python 3.10.22、uv 0.12.23、Node.js 20.19.2、FFmpeg/ffprobe 7.1.3系。
+  ツールは固定URLとSHA-256で導入します。FFmpegは共有ライブラリも同梱した同じビルドを使います。
+  TorchCodec 0.7の対応範囲に合わせて7系を選び、ASRが読み込むビルドとCLIの一致も確認します。
+- `requirements.in` / `requirements.lock`: 開発・Qt・WhisperX・CPU版PyTorchを含む全Python依存。
+  lockのハッシュを必須とし、ソースビルドを行いません。`--torch-backend cpu` により
+  torch・torchaudio・torchvision・tritonをlock生成時と同じPyTorch CPU indexから取得します。
+- OSのバージョンは固定しません。Qtの基本ライブラリ（libegl1・libpulse0）はaptで導入します。
+  Windows配布用のランタイム契約・lock・互換性検証は従来どおりです。
 
-起動スキルには「`/workspace/subtitle-edit-bay` を使用し、Python・テスト・GUIの実行は
-必ず `bash scripts/linux_dev.sh ...` を通す。ホストの `.venv` や旧 `.cloud-setup/env.sh`
-を使用しない」と記載します。環境設定の保存・公開はPRのマージとは別の操作です。
-既存のGUI設定や動画・音声はセットアップから書き換えません。
+初期のPython依存は、成功したPR #439のCIで使用したBudouX 0.9.3、Qt 6.11.2、
+mypy 2.3.1、Ruff 0.16.9に合わせています。
 
-管理されたクラウドではDockerの既存proxy設定を使用し、セッションのCAを
-ビルド時のsecretと実行時の読み取り専用マウントで渡します。認証情報はイメージに保存しません。
+## 更新
 
-## 依存更新
-
-Linux用のバージョンは `requirements.in` で宣言します。最初の共通化では、PR #439の
-成功したCIで使用したBudouX 0.9.3、PySide6 6.11.2、mypy 2.3.1、Ruff 0.16.9を採用しました。
-Windows用lockをLinux用制約に変換する経路はありません。
-
-`--torch-backend cpu` が選ぶtorch・torchaudio・torchvision・tritonは、共通lockから
-機械的に抽出してPyTorchのCPU indexから取得します。残りはPyPIから取得します。
-同じバージョン・ファイル名でも配布元の異なるTriton wheelはハッシュが異なるため、
-取得元も共有し、ハッシュ照合を必須にします。
-
-Python 3.10.22 / uv 0.12.23を用意したLinuxで、リポジトリルートから再生成します。
-既存lockのバージョンを維持する場合は `--upgrade` を付けません。
+Python依存は `requirements.in` を変更し、セットアップ済みのLinuxで再生成します。
+必要なパッケージだけを更新する場合は `--upgrade-package <name>` を追加します。
 
 ```bash
-uv pip compile --python-version 3.10.22 --python-platform x86_64-manylinux_2_40 \
+source runtime/linux-dev/env.sh
+uv pip compile --python-version "$PYTHON_VERSION" --python-platform x86_64-manylinux_2_34 \
   --torch-backend cpu --generate-hashes --no-emit-index-url --no-annotate --no-header \
   runtime/linux-dev/requirements.in -o runtime/linux-dev/requirements.lock
-sha256sum requirements.txt requirements-dev.txt requirements-type-stubs.txt \
-  runtime/linux-dev/requirements.in > runtime/linux-dev/inputs.sha256
-bash scripts/linux_dev.sh build
-bash scripts/linux_dev.sh quality
-bash scripts/linux_dev.sh test
+bash scripts/setup_linux.sh
 ```
 
-OSパッケージを更新するときは、Dockerfileに固定したベースから新しい一時コンテナを作り、
-`apt-get update` と `apt-get install --yes --no-install-recommends ffmpeg libegl1 libpulse0 git nodejs`
-を実行した後の `dpkg-query -W -f='${binary:Package}=${Version}\n'` を `apt.lock` に保存します。
-ベースdigest・Pythonバージョンを変える場合は `scripts/linux_dev_environment.py` の検証条件も
-同じPRで更新してください。固定バージョンが配信元から消えた場合も、自動で最新版へ切り替えず
-明示的なlock更新とCI検証を行います。
+ツール更新時は `toolchain.env` のバージョン・取得元・SHA-256を一緒に変更し、上記の検証を実行します。
+FFmpegはBtbNの月末保存版（配布元の保持期間は2年）を指定します。`latest` や日次版は使用しません。
+取得不能・ハッシュ不一致の場合は失敗させ、別バージョンに自動で切り替えません。
+
+## クラウド設定への適用
+
+Git管理外の保存済みinstall_scriptを次の呼び出しに置き換えます。
+
+```bash
+bash /workspace/subtitle-edit-bay/scripts/setup_linux.sh
+```
+
+start_skillには「`/workspace/subtitle-edit-bay` を使用し、Python・GUI・テストの前に
+`source runtime/linux-dev/env.sh` を実行する」と記載します。
+旧 `.cloud-setup` でのlock生成・インストール・`env.sh` のsourceを置き換えてください。
+PRのマージだけでは保存済みのクラウド設定は更新されません。

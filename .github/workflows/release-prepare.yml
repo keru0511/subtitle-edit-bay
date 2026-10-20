@@ -69,6 +69,8 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      BASH_ENV: ${{ github.workspace }}/source/runtime/linux-dev/env.sh
     steps:
       - name: Check out exact source
         uses: actions/checkout@v7
@@ -77,9 +79,27 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
           path: source
-      - name: Run tests in the shared Linux environment
+      - name: Set up the shared Linux environment
         working-directory: source
-        run: bash scripts/linux_dev.sh test
+        run: bash scripts/setup_linux.sh
+      - name: Check standard unittest discovery
+        working-directory: source
+        run: python scripts/check_unittest_discovery.py
+      - name: Run portable unit tests
+        working-directory: source
+        run: python scripts/run_ci_tests.py --group portable-unit
+      - name: Run Qt and GUI tests
+        working-directory: source
+        run: python scripts/run_ci_tests.py --group qt-gui
+      - name: Run FFmpeg runtime tests
+        working-directory: source
+        env:
+          RUN_FFMPEG_SMOKE: "1"
+        run: python scripts/run_ci_tests.py --group ffmpeg-runtime
+
+      - name: Check GUI startup
+        working-directory: source
+        run: bash scripts/check_gui_startup.sh
 
   build:
     name: Build and verify Windows installer

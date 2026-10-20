@@ -28,7 +28,6 @@ python_version = "3.10"
 # CIとローカルが同じ対象を使う。全体移行に伴ってこの一覧を拡張する。
 files = [
   "scripts/check_quality.py",
-  "scripts/linux_dev_environment.py",
   "tests/test_linux_dev_environment.py",
   "src/platform_paths.py",
   "src/platform_updates.py",

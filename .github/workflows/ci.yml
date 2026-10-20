@@ -63,13 +63,38 @@ jobs:
     name: Python quality and No Any
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      BASH_ENV: ${{ github.workspace }}/runtime/linux-dev/env.sh
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Run quality checks in the shared Linux environment
-        run: bash scripts/linux_dev.sh quality
+
+      - name: Set up the shared Linux environment
+        run: bash scripts/setup_linux.sh
+
+      - name: Validate CI test classification
+        run: python scripts/run_ci_tests.py --validate
+
+      - name: Run Ruff lint
+        run: python scripts/check_quality.py --lint-only
+
+      - name: Run scoped Ruff format check
+        run: python scripts/check_quality.py --format-only --paths scripts/check_quality.py
+
+      - name: Run configured type checks
+        run: |
+          for platform in linux win32 darwin; do
+            python scripts/check_quality.py --type-only --type-platform "$platform"
+          done
+
+      - name: Reject Any in every tracked Python file
+        run: |
+          for platform in linux win32 darwin; do
+            python scripts/check_no_any.py --platform "$platform"
+          done
 
   portable-tests:
     name: Portable, Qt, and FFmpeg tests
@@ -82,13 +107,34 @@ jobs:
       needs.classify-validation.outputs.delegates_to_readiness != 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      BASH_ENV: ${{ github.workspace }}/runtime/linux-dev/env.sh
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Run tests in the shared Linux environment
-        run: bash scripts/linux_dev.sh test
+
+      - name: Set up the shared Linux environment
+        run: bash scripts/setup_linux.sh
+
+      - name: Check standard unittest discovery
+        run: python scripts/check_unittest_discovery.py
+
+      - name: Run portable unit tests
+        run: python scripts/run_ci_tests.py --group portable-unit
+
+      - name: Run Qt and GUI tests
+        run: python scripts/run_ci_tests.py --group qt-gui
+
+      - name: Run FFmpeg runtime tests
+        env:
+          RUN_FFMPEG_SMOKE: "1"
+        run: python scripts/run_ci_tests.py --group ffmpeg-runtime
+
+      - name: Check GUI startup
+        run: bash scripts/check_gui_startup.sh
 
   windows-tests:
     name: Windows runtime tests

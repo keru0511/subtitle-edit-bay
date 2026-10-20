@@ -13,9 +13,12 @@ from src.gui_models import SubtitleClipFilterModel, SubtitleListModel
 
 
 class SubtitleClipFilterModelTests(unittest.TestCase):
+    _app: QApplication | None = None
+
     @classmethod
     def setUpClass(cls) -> None:
-        cls._app = QApplication.instance() or QApplication([])
+        if QApplication.instance() is None:
+            cls._app = QApplication([])
 
     def setUp(self) -> None:
         self.source = SubtitleListModel()
@@ -53,7 +56,6 @@ class SubtitleClipFilterModelTests(unittest.TestCase):
             {"id": "last", "start": 16.0, "end": 23.0, "text": "after"},
         ]
         self.source.set_segments(incoming)
-        self._app.processEvents()
         self.assertEqual(self.proxy.rowCount(), 1)
         self.assertEqual(self.proxy.mapToSource(self.proxy.index(0, 0)).row(), 1)
         self.assertEqual(

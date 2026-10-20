@@ -38,7 +38,9 @@ CIは `BASH_ENV` で同じ `env.sh` を読み、各検証ステップで同じ�
 - `requirements.in` / `requirements.lock`: 開発・Qt・WhisperX・CPU版PyTorchを含む全Python依存。
   lockのハッシュを必須とし、ソースビルドを行いません。`--torch-backend cpu` により
   torch・torchaudio・torchvision・tritonをlock生成時と同じPyTorch CPU indexから取得します。
-- OSのバージョンは固定しません。Qtの基本ライブラリ（libegl1・libpulse0）はaptで導入します。
+- OSのバージョンは固定しません。QtとFFmpegの基本ライブラリ
+  （libegl1・libpulse0・libva-drm2・libva-x11-2）は必要に応じてaptで導入します。
+  Qtのメディア処理はCPUに固定し、ヘッドレス環境でGPUを探索しません。
   Windows配布用のランタイム契約・lock・互換性検証は従来どおりです。
 
 初期のPython依存は、成功したPR #439のCIで使用したBudouX 0.9.3、Qt 6.11.2、

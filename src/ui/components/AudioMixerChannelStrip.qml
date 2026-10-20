@@ -53,7 +53,8 @@ Rectangle {
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.minimumHeight: 180
+            // Leave room for labels and controls when fallback fonts are taller.
+            Layout.minimumHeight: 120
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 13

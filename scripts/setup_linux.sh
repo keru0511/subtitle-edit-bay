@@ -10,11 +10,12 @@ cd "$repo_root"
 source runtime/linux-dev/env.sh
 
 # OS libraries remain host-managed. Python and executable tools are pinned below.
-if [[ ! -f /usr/lib/x86_64-linux-gnu/libEGL.so.1 || ! -f /usr/lib/x86_64-linux-gnu/libpulse.so.0 ]]; then
+if [[ ! -f /usr/lib/x86_64-linux-gnu/libEGL.so.1 || ! -f /usr/lib/x86_64-linux-gnu/libpulse.so.0 \
+    || ! -f /usr/lib/x86_64-linux-gnu/libva-drm.so.2 || ! -f /usr/lib/x86_64-linux-gnu/libva-x11.so.2 ]]; then
     elevate=()
     if (( EUID != 0 )); then elevate=(sudo); fi
     "${elevate[@]}" apt-get update -qq
-    "${elevate[@]}" apt-get install --yes --no-install-recommends libegl1 libpulse0
+    "${elevate[@]}" apt-get install --yes --no-install-recommends libegl1 libpulse0 libva-drm2 libva-x11-2
 fi
 
 install_archive() (

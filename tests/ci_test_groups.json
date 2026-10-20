@@ -222,6 +222,7 @@
         "tests.test_codex_ai_provider.CodexAIProviderTests.test_close_during_client_creation_prevents_late_runtime_start",
         "tests.test_codex_sdk.CodexSdkTests.test_bundled_runtime_initializes",
         "tests.test_codex_sdk.CodexSdkTests.test_deadline_closes_stalled_sdk_connection",
+        "tests.test_codex_sdk.CodexSdkTests.test_isolated_session_closes_sdk_before_workspace_cleanup",
         "tests.test_codex_sdk.CodexSdkTests.test_provider_receives_typed_sdk_notifications_before_start_response",
         "tests.test_codex_sdk.CodexSdkTests.test_structured_result_progress_and_isolation_use_sdk",
         "tests.test_gui_codex_chat_state.CodexChatControllerTests.test_shutdown_during_provider_creation_prevents_late_connection"

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from contextlib import nullcontext
+from contextlib import closing, nullcontext
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Callable, Mapping, cast
 
@@ -254,8 +254,8 @@ class CodexSessionController:
         client: CodexClient | None = None
         try:
             workspace_context = isolated_codex_cwd() if self.isolated_turn else nullcontext(None)
-            with workspace_context as isolated_cwd:
-                client = self._create_client(isolated_cwd)
+            # Windows keeps a live child's cwd locked: close the SDK first.
+            with workspace_context as isolated_cwd, closing(self._create_client(isolated_cwd)) as client:
                 with self._state_lock:
                     if not self._is_active(generation, stop_event):
                         return
@@ -374,14 +374,9 @@ class CodexSessionController:
                     stop_event=stop_event,
                 )
         finally:
-            if client is not None:
-                try:
-                    client.close()
-                except Exception:
-                    pass
-                with self._state_lock:
-                    if self._client is client:
-                        self._client = None
+            with self._state_lock:
+                if self._client is client:
+                    self._client = None
 
     def _create_client(self, cwd: str | None) -> CodexClient:
         return self.client_factory(cwd)

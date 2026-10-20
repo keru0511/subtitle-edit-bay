@@ -5,7 +5,10 @@ import sys
 import tempfile
 import threading
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
+from unittest.mock import patch
 
 from openai_codex import CodexConfig, TurnHandle
 from openai_codex.client import CodexClient
@@ -14,9 +17,10 @@ from openai_codex.generated.v2_all import ChatgptLoginAccountResponse, TurnInter
 
 from src.ai_provider import AIProviderEvent, AIProviderPrompt
 from src.codex_ai_provider import CodexAIProvider
-from src.codex_isolation import build_isolated_thread_params, collect_mcp_server_names
+from src.codex_isolation import build_isolated_thread_params, collect_mcp_server_names, isolated_codex_cwd
 from src.codex_sdk import create_codex_client, reject_server_request, run_structured_turn, sdk_deadline
 from src.data_boundary import decode_json, is_string_object_mapping
+from src.gui_codex_state import CodexSessionController
 from tests.typed_case import TypedTestCase
 
 
@@ -95,6 +99,59 @@ class CodexSdkTests(TypedTestCase):
                 run_structured_turn(
                     self.client, thread_id=thread_id, prompt=prompt, output_schema={"type": "object"}, context={}
                 )
+
+    def test_isolated_session_closes_sdk_before_workspace_cleanup(self) -> None:
+        for prompt, expected_state in (("review", "proposal_ready"), ("invalid-json", "error")):
+            with self.subTest(prompt=prompt):
+                clients: list[CodexClient] = []
+                workspaces: list[Path] = []
+                closed_before_cleanup: list[bool] = []
+
+                def create_client(cwd: str | None) -> CodexClient:
+                    assert cwd is not None
+                    workspaces.append(Path(cwd))
+                    client = CodexClient(
+                        CodexConfig(
+                            cwd=cwd,
+                            launch_args_override=(
+                                sys.executable,
+                                "-m",
+                                "tests.fake_codex_app_server",
+                                str(self.requests),
+                            ),
+                            env={"PYTHONUTF8": "1", "PYTHONPATH": str(Path(__file__).resolve().parents[1])},
+                        ),
+                        approval_handler=reject_server_request,
+                    )
+                    self.addCleanup(client.close)
+                    clients.append(client)
+                    return client
+
+                @contextmanager
+                def checked_workspace() -> Iterator[str]:
+                    with isolated_codex_cwd() as cwd:
+                        try:
+                            yield cwd
+                        finally:
+                            # Windows cannot delete a live child process's cwd. Check
+                            # that SDK shutdown precedes deletion on every platform.
+                            with self.assertRaises(TransportClosedError):
+                                clients[0].model_list()
+                            closed_before_cleanup.append(True)
+
+                controller = CodexSessionController(
+                    client_factory=create_client, isolated_turn=True, proposal_parser=lambda payload: payload
+                )
+                self.addCleanup(controller.stop)
+                with patch("src.gui_codex_state.isolated_codex_cwd", checked_workspace):
+                    controller.start(prompt=prompt, context={})
+                    worker = controller._thread
+                    assert worker is not None
+                    worker.join(5)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(controller.snapshot.state, expected_state)
+                self.assertEqual(closed_before_cleanup, [True])
+                self.assertFalse(workspaces[0].exists())
 
     def test_final_answer_takes_precedence_over_later_commentary(self) -> None:
         thread_id = self.client.thread_start().thread.id

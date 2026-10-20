@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 
-from PySide6.QtCore import QAbstractListModel, QByteArray, QModelIndex, QObject, QPersistentModelIndex, Qt
+from PySide6.QtCore import QAbstractListModel, QByteArray, QModelIndex, QObject, QPersistentModelIndex, QSortFilterProxyModel, Qt
 
 from .data_boundary import coerce_float, coerce_int
+from .subtitle_clip_filter import overlaps_source_window
 from .subtitle_line_count import segment_editor_text
 
 
@@ -161,6 +162,52 @@ class SubtitleListModel(QAbstractListModel):
         self.beginResetModel()
         self._segments = incoming
         self.endResetModel()
+
+
+class SubtitleClipFilterModel(QSortFilterProxyModel):
+    """Read-only source-time view of captions for one sequence clip.
+
+    Keeps SubtitleListModel as the only source of truth. The proxy owns no
+    captions and never rewrites source indices or source timestamps.
+    """
+
+    def __init__(self, source: SubtitleListModel, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._source_window: tuple[float, float] | None = None
+        self._has_transcript = True
+        self.setSourceModel(source)
+
+    def set_clip_window(
+        self,
+        start: float | None,
+        end: float | None,
+        *,
+        has_transcript: bool = True,
+    ) -> None:
+        window = None if start is None or end is None else (float(start), float(end))
+        if window == self._source_window and has_transcript == self._has_transcript:
+            return
+        self._source_window = window
+        self._has_transcript = has_transcript
+        self.invalidateFilter()
+
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+        if self._source_window is None:
+            return True
+        if not self._has_transcript:
+            return False
+        source = self.sourceModel()
+        if source is None:
+            return False
+        index = source.index(source_row, 0, source_parent)
+        if not index.isValid():
+            return False
+        start = source.data(index, SubtitleListModel.StartRole)
+        end = source.data(index, SubtitleListModel.EndRole)
+        clip_start, clip_end = self._source_window
+        return overlaps_source_window(
+            coerce_float(start), coerce_float(end), clip_start, clip_end
+        )
 
 
 class ShortVideoClipListModel(QAbstractListModel):

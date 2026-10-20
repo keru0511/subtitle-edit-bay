@@ -175,6 +175,7 @@ class SubtitleClipFilterModel(QSortFilterProxyModel):
         super().__init__(parent)
         self._source_window: tuple[float, float] | None = None
         self._has_transcript = True
+        self._subtitle_source = source
         self.setSourceModel(source)
 
     def set_clip_window(
@@ -191,14 +192,14 @@ class SubtitleClipFilterModel(QSortFilterProxyModel):
         self._has_transcript = has_transcript
         self.invalidateFilter()
 
-    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+    def filterAcceptsRow(
+        self, source_row: int, source_parent: QModelIndex | QPersistentModelIndex
+    ) -> bool:
         if self._source_window is None:
             return True
         if not self._has_transcript:
             return False
-        source = self.sourceModel()
-        if source is None:
-            return False
+        source = self._subtitle_source
         index = source.index(source_row, 0, source_parent)
         if not index.isValid():
             return False

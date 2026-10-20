@@ -350,6 +350,8 @@ class CodexChatController:
         old_provider: AIProvider | None = None
         try:
             with self._lock:
+                if self._shutdown:
+                    return
                 if force:
                     old_provider = self._provider
                     self._provider = None
@@ -362,7 +364,12 @@ class CodexChatController:
             provider = self._create_provider()
             provider.subscribe(self._on_provider_event)
             with self._lock:
-                self._provider = provider
+                shutting_down = self._shutdown
+                if not shutting_down:
+                    self._provider = provider
+            if shutting_down:
+                self._close_provider(provider)
+                return
             state = provider.connect(force=False)
             if state.availability == "error":
                 self._handle_provider_error(state, provider)

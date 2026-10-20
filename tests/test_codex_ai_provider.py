@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -20,6 +21,7 @@ class CodexAIProviderTests(TypedTestCase):
     def test_account_model_session_stream_and_cancel_are_adapterized(self) -> None:
         client = FakeCodexClient()
         provider = CodexAIProvider(client_factory=lambda: client)
+        self.addCleanup(provider.close)
         events: list[AIProviderEvent] = []
         provider.subscribe(events.append)
 
@@ -68,6 +70,7 @@ class CodexAIProviderTests(TypedTestCase):
     def test_unauthenticated_account_has_no_models_and_login_state_is_generic(self) -> None:
         client = FakeCodexClient(authenticated=False)
         provider = CodexAIProvider(client_factory=lambda: client)
+        self.addCleanup(provider.close)
         state = provider.connect()
         self.assertEqual(state.auth_state, "unauthenticated")
         self.assertEqual(state.models, ())
@@ -83,6 +86,7 @@ class CodexAIProviderTests(TypedTestCase):
                 raise OSError("secret local path")
 
         provider = CodexAIProvider(client_factory=BrokenClient)
+        self.addCleanup(provider.close)
         state = provider.connect()
         self.assertEqual(state.availability, "error")
         self.assertEqual(state.auth_state, "error")
@@ -91,6 +95,7 @@ class CodexAIProviderTests(TypedTestCase):
     def test_failed_turn_without_error_message_uses_fallback(self) -> None:
         client = FakeCodexClient()
         provider = CodexAIProvider(client_factory=lambda: client)
+        self.addCleanup(provider.close)
         events: list[AIProviderEvent] = []
         provider.subscribe(events.append)
         provider.connect()
@@ -104,6 +109,32 @@ class CodexAIProviderTests(TypedTestCase):
             with self.subTest(turn=turn):
                 callback(CodexNotification("turn/completed", {"turn": turn}))
                 self.assertEqual(events[-1].error, "原因を確認できません")
+
+    def test_close_during_client_creation_prevents_late_runtime_start(self) -> None:
+        client = FakeCodexClient()
+        entered, release = threading.Event(), threading.Event()
+
+        def create_client() -> FakeCodexClient:
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("fixture factory was not released")
+            return client
+
+        provider = CodexAIProvider(client_factory=create_client)
+        self.addCleanup(provider.close)
+        worker = threading.Thread(target=provider.connect)
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            provider.close()
+        finally:
+            release.set()
+            worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(client.started)
+        self.assertEqual(provider.state.availability, "disconnected")
+        self.assertEqual(provider.connect().availability, "disconnected")
+        self.assertFalse(client.started)
 
 
 if __name__ == "__main__":

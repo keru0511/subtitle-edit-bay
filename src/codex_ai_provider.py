@@ -49,6 +49,7 @@ class CodexAIProvider:
         self._preferred_model = str(preferred_model).strip()
         self._state = AIProviderState(selected_model=self._preferred_model)
         self._client: CodexClient | None = None
+        self._closed = False
         self._listeners: list[AIProviderListener] = []
         self._lock = threading.RLock()
 
@@ -71,6 +72,8 @@ class CodexAIProvider:
         old_client: CodexClient | None = None
         try:
             with self._lock:
+                if self._closed:
+                    return self._state
                 if not force and self._client is not None:
                     return self._state
                 if force:
@@ -80,10 +83,13 @@ class CodexAIProvider:
             if old_client is not None:
                 old_client.close()
             client = self.client_factory()
-            with self._lock:
-                self._client = client
             with sdk_deadline(client):
-                client.start()
+                with self._lock:
+                    if self._closed:
+                        client.close()
+                        return self._state
+                    self._client = client
+                    client.start()
                 client.initialize()
             threading.Thread(
                 target=self._consume_global, args=(client,), name="codex-account-events", daemon=True
@@ -91,6 +97,8 @@ class CodexAIProvider:
             return self.refresh()
         except Exception as error:
             with self._lock:
+                if self._closed:
+                    return self._state
                 failed_client = self._client
                 self._client = None
             if failed_client is not None:
@@ -263,6 +271,7 @@ class CodexAIProvider:
 
     def close(self) -> None:
         with self._lock:
+            self._closed = True
             client = self._client
             self._client = None
         if client is not None:

@@ -11,6 +11,7 @@ from pathlib import Path
 from openai_codex.generated import v2_all as v2
 from openai_codex.models import JsonObject
 
+from src.codex_ai_provider import CodexAIProvider
 from src.gui_codex_chat_state import CodexChatController
 from tests.codex_fixtures import FakeSDKClient, params_object, sdk_model
 from tests.codex_fixtures import notification as CodexNotification
@@ -62,6 +63,31 @@ def wait_for(predicate: Callable[[], bool], timeout: float = 2.0) -> None:
 
 
 class CodexChatControllerTests(TypedTestCase):
+    def test_shutdown_during_provider_creation_prevents_late_connection(self) -> None:
+        client = FakeChatClient()
+        provider = CodexAIProvider(client_factory=lambda: client)
+        self.addCleanup(provider.close)
+        entered, release = threading.Event(), threading.Event()
+
+        def create_provider() -> CodexAIProvider:
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("fixture factory was not released")
+            return provider
+
+        controller = CodexChatController(provider_factory=create_provider, workspace_root=Path.cwd())
+        try:
+            controller.connect()
+            self.assertTrue(entered.wait(2))
+            controller.shutdown()
+            release.set()
+            wait_for(lambda: provider.state.availability == "disconnected")
+            self.assertFalse(client.started)
+            self.assertIsNone(controller._provider)
+        finally:
+            release.set()
+            controller.shutdown()
+
     def test_chat_state_imports_with_installed_sdk_dependencies(self) -> None:
         completed = subprocess.run(
             [

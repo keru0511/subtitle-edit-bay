@@ -197,10 +197,10 @@ class CodexSessionController:
     def stop(self) -> None:
         with self._state_lock:
             stop_event = self._stop_event
+            stop_event.set()
             generation = self._generation
             client = self._client
             snapshot = self._snapshot
-        stop_event.set()
         if client is not None and snapshot.turn_id:
             try:
                 with sdk_deadline(client):
@@ -256,12 +256,12 @@ class CodexSessionController:
             workspace_context = isolated_codex_cwd() if self.isolated_turn else nullcontext(None)
             # Windows keeps a live child's cwd locked: close the SDK first.
             with workspace_context as isolated_cwd, closing(self._create_client(isolated_cwd)) as client:
-                with self._state_lock:
-                    if not self._is_active(generation, stop_event):
-                        return
-                    self._client = client
                 with sdk_deadline(client):
-                    client.start()
+                    with self._state_lock:
+                        if not self._is_active(generation, stop_event):
+                            return
+                        self._client = client
+                        client.start()
                     client.initialize()
                 if not self._is_active(generation, stop_event):
                     return
@@ -411,10 +411,13 @@ class CodexSessionController:
         generation: int | None = None,
         stop_event: threading.Event | None = None,
     ) -> None:
-        if generation is not None and not self._is_current_generation(generation):
-            return
-        self._snapshot = snapshot
-        on_state = self.on_state
+        with self._state_lock:
+            if generation is not None and generation != self._generation:
+                return
+            if stop_event is not None and stop_event.is_set():
+                return
+            self._snapshot = snapshot
+            on_state = self.on_state
         if on_state is not None:
             self._dispatch(lambda: on_state(snapshot), generation, stop_event)
 

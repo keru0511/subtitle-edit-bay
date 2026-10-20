@@ -3,9 +3,11 @@ from __future__ import annotations
 import threading
 import time
 import unittest
-from typing import Callable, Mapping
+from contextlib import contextmanager
+from typing import Callable, Iterator, Mapping
 from unittest.mock import patch
 
+from openai_codex.client import CodexClient
 from openai_codex.generated import v2_all as v2
 from openai_codex.models import JsonObject
 
@@ -152,6 +154,72 @@ class GuiCodexStateTests(TypedTestCase):
         self.assertEqual(controller.snapshot.state, "stopped")
         self.assertEqual(proposals, [])
         self.assertFalse(any(item.state == "proposal_ready" for item in snapshots))
+
+    def test_stop_before_sdk_start_prevents_late_runtime_creation(self) -> None:
+        entered, release = threading.Event(), threading.Event()
+        starts: list[str] = []
+
+        class ObservedClient(FakeClient):
+            def start(self) -> None:
+                starts.append("started")
+                super().start()
+
+        @contextmanager
+        def pause_before_start(_client: CodexClient) -> Iterator[None]:
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError("fixture startup was not released")
+            yield
+
+        client = ObservedClient()
+        controller = CodexSessionController(client_factory=lambda cwd: client)
+        with patch("src.gui_codex_state.sdk_deadline", pause_before_start):
+            controller.start(prompt="停止する", context={})
+            worker = controller._thread
+            assert worker is not None
+            try:
+                self.assertTrue(entered.wait(2))
+                controller.stop()
+            finally:
+                release.set()
+                worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(controller.snapshot.state, "stopped")
+        self.assertEqual(starts, [])
+        self.assertFalse(client.started)
+
+    def test_stop_rejects_late_state_publication(self) -> None:
+        entered, release = threading.Event(), threading.Event()
+
+        class PausingController(CodexSessionController):
+            def _publish(
+                self,
+                snapshot: CodexSessionSnapshot,
+                *,
+                generation: int | None = None,
+                stop_event: threading.Event | None = None,
+            ) -> None:
+                if snapshot.state == "authenticating":
+                    entered.set()
+                    if not release.wait(3):
+                        raise TimeoutError("fixture state publication was not released")
+                super()._publish(snapshot, generation=generation, stop_event=stop_event)
+
+        client = FakeClient()
+        controller = PausingController(client_factory=lambda cwd: client)
+        controller.start(prompt="停止する", context={})
+        worker = controller._thread
+        assert worker is not None
+        try:
+            self.assertTrue(entered.wait(2))
+            controller.stop()
+        finally:
+            release.set()
+            worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(controller.snapshot.state, "stopped")
+        self.assertFalse(controller.running)
+        self.assertFalse(client.started)
 
     def test_stop_interrupts_active_turn_with_thread_and_turn_ids(self) -> None:
         client = FakeClient()

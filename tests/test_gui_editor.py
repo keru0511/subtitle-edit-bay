@@ -263,6 +263,47 @@ class GuiEditorRegressionTests(TypedTestCase):
     def tearDownClass(cls) -> None:
         cls._session.cleanup()
 
+    def test_app_exit_closes_codex_proposal_clients(self) -> None:
+        """Windows GUI CI必須: アプリ終了で字幕・音量提案のSDK接続も閉じる。"""
+        script = """
+import sys
+from pathlib import Path
+from unittest.mock import patch
+from PySide6.QtCore import QTimer
+from src.gui import EditBayBackend
+from src.gui_codex_state import CodexSessionSnapshot
+from tests.codex_fixtures import FakeSDKClient
+
+with patch("src.gui.CodexChatController.connect"):
+    app = EditBayBackend(["codex-exit-test"], workspace_root=Path(sys.argv[1]))
+sessions = (app._codex_session, app._codex_audio_mix_session)
+clients = []
+for session in sessions:
+    client = FakeSDKClient()
+    client.start()
+    session._client = client
+    session._snapshot = CodexSessionSnapshot(state="running")
+    clients.append(client)
+QTimer.singleShot(0, app.quit)
+try:
+    assert app.exec() == 0
+    assert all(not client.started for client in clients), "proposal SDK clients survived app exit"
+    assert all(session.snapshot.state == "stopped" for session in sessions)
+finally:
+    for session in sessions:
+        session.stop()
+"""
+        completed = subprocess.run(
+            [sys.executable, "-c", script, str(self.root)],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
     def setUp(self) -> None:
         self.addCleanup(self._session.finish_test)
         self.root = self._session.prepare_test(self._testMethodName)

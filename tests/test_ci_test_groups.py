@@ -326,9 +326,7 @@ class CiWorkflowContractTests(TypedTestCase):
 
         for expected in (
             "portable-tests:",
-            "--group portable-unit",
-            "--group qt-gui",
-            "--group ffmpeg-runtime",
+            "bash scripts/linux_dev.sh test",
             "--group windows-runtime",
             "--group windows-launcher-runtime",
             "--group windows-ffmpeg-runtime",
@@ -367,13 +365,14 @@ class CiWorkflowContractTests(TypedTestCase):
         ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
         release_workflow = (REPO_ROOT / ".github" / "workflows" / "release-prepare.yml").read_text(encoding="utf-8")
         discovery_command = "python scripts/check_unittest_discovery.py"
+        shared_entrypoint = (REPO_ROOT / "runtime/linux-dev/entrypoint.sh").read_text(encoding="utf-8")
 
-        self.assertIn(discovery_command, ci_workflow)
-        self.assertLess(ci_workflow.index(discovery_command), ci_workflow.index("--group portable-unit"))
-        self.assertIn(discovery_command, release_workflow)
-        self.assertLess(release_workflow.index(discovery_command), release_workflow.index("--group portable-unit"))
+        for workflow in (ci_workflow, release_workflow):
+            self.assertIn("bash scripts/linux_dev.sh test", workflow)
+        self.assertIn(discovery_command, shared_entrypoint)
+        self.assertLess(shared_entrypoint.index(discovery_command), shared_entrypoint.index("--group portable-unit"))
         for group in ("portable-unit", "qt-gui", "ffmpeg-runtime"):
-            self.assertIn(f"python scripts/run_ci_tests.py --group {group}", release_workflow)
+            self.assertIn(f"python scripts/run_ci_tests.py --group {group}", shared_entrypoint)
         self.assertNotIn('python -m unittest discover -s tests -p "test_*.py" -v', release_workflow)
 
 

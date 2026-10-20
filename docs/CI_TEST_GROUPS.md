@@ -3,13 +3,17 @@
 通常のCIでは、テストを実行環境への依存度ごとに分けます。分類の正本は
 `tests/ci_test_groups.json`、実行入口は `scripts/run_ci_tests.py` です。
 
+Linuxの通常CI・リリース準備・クラウド開発は、共通の固定コンテナとlockを使用します。
+`bash scripts/linux_dev.sh test` で同じグループを実行し、最後にMain.qmlの実起動を確認します。
+環境定義と更新手順は [Linux共通環境](../runtime/linux-dev/README.md) を参照してください。
+
 ## 分類と実行環境
 
 | グループ | 実行環境 | 対象 |
 | --- | --- | --- |
-| `portable-unit` | Ubuntu | OSや実ランタイムに依存しないロジック、モデル、設定、モックを使うプロセステスト |
-| `qt-gui` | Ubuntu（offscreen） | クロスプラットフォームのQt/QML、GUI状態、音声ミキサーのテスト |
-| `ffmpeg-runtime` | Ubuntu | 実際のFFmpeg/FFprobe/libassを使うクロスプラットフォームのメディアテスト |
+| `portable-unit` | Linux共通コンテナ | OSや実ランタイムに依存しないロジック、モデル、設定、モックを使うプロセステスト |
+| `qt-gui` | Linux共通コンテナ（offscreen） | クロスプラットフォームのQt/QML、GUI状態、音声ミキサーのテスト |
+| `ffmpeg-runtime` | Linux共通コンテナ | 実際のFFmpeg/FFprobe/libassを使うクロスプラットフォームのメディアテスト |
 | `windows-runtime` | Windows | 更新管理ロジックとWindows上のQProcessを検証するテスト |
 | `windows-launcher-runtime` | Windows | Python外の依存を追加せず、PowerShell・BAT・インストーラー更新経路を実プロセスと実ファイルシステムで検証するテスト |
 | `windows-ffmpeg-runtime` | Windows | Windows版FFmpeg、Qt Multimedia、GUI音声ミキサーを実際に動かすスモークテスト |

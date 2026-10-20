@@ -78,6 +78,7 @@
         "test_installer_migration_entrypoint",
         "test_legacy_migration",
         "test_legacy_migration_module_boundaries",
+        "test_linux_dev_environment",
         "test_media_probe",
         "test_merge_transcripts",
         "test_multi_source_short_video",

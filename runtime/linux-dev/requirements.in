@@ -1,0 +1,24 @@
+# Linux CI and cloud development share this complete CPU environment.
+-r ../../requirements.txt
+-r ../../requirements-dev.txt
+-r ../../requirements-type-stubs.txt
+
+# Versions observed in the successful CI run for PR #439.
+budoux==0.9.3
+PySide6==6.11.2
+numpy==2.2.6
+mypy==2.3.1
+ruff==0.16.9
+ast-serialize==0.11.2
+librt==0.16.0
+
+# Include ASR here so installing it cannot silently change the tested environment.
+whisperx==3.8.6
+torch==2.8.0+cpu
+torchvision==0.23.0+cpu
+torchaudio==2.8.0+cpu
+
+# Pin packaging tools too; installation accepts wheels only.
+pip==26.2.1
+setuptools==80.9.0
+wheel==0.45.1

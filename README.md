@@ -61,6 +61,11 @@ Git clone環境では、追跡対象ファイルにローカル変更がある�
 
 ## 手動セットアップ
 
+Linuxの開発・クラウド環境は、通常CIと共通の固定コンテナを使用します。
+`bash runtime/linux-dev/cloud-install.sh` で準備し、
+`bash scripts/linux_dev.sh quality` と `bash scripts/linux_dev.sh test` でCIと同じ検証を実行します。
+詳しくは [Linux CI・クラウド共通環境](runtime/linux-dev/README.md) を参照してください。
+
 Python 3.10とFFmpeg/ffprobeを手動で用意し、プロジェクト専用の `.venv` にWhisperXと字幕レイアウト依存を導入します。
 
 ~~~powershell

@@ -1,0 +1,16 @@
+.git
+.env
+.env.*
+.venv
+.local
+.gui
+__pycache__
+*.pyc
+*.log
+.mypy_cache
+.ruff_cache
+video_import
+video_export
+out
+dist
+build

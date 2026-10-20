@@ -8,7 +8,7 @@ Windows固有のCI・配布環境は、従来のWindows用ランタイム契約�
 ## 固定するもの
 
 - Python 3.10.22を含むベースイメージをdigestで固定します。
-- `apt.lock` は、ベースと追加依存を含む全OSパッケージのバージョンを固定します。
+- `apt.lock` は、ベースとFFmpeg・Node.js等の追加依存を含む全OSパッケージを固定します。
 - `requirements.lock` は、開発ツール、Qt、WhisperX、CPU版PyTorchとその推移的依存を
   SHA-256付きで固定します。インストール時の依存解決やソースビルドは行いません。
 - `entrypoint.sh` とDockerfileで、offscreen/softwareのQt設定とスレッド数を共有します。
@@ -75,7 +75,7 @@ bash scripts/linux_dev.sh test
 ```
 
 OSパッケージを更新するときは、Dockerfileに固定したベースから新しい一時コンテナを作り、
-`apt-get update` と `apt-get install --yes --no-install-recommends ffmpeg libegl1 libpulse0 git`
+`apt-get update` と `apt-get install --yes --no-install-recommends ffmpeg libegl1 libpulse0 git nodejs`
 を実行した後の `dpkg-query -W -f='${binary:Package}=${Version}\n'` を `apt.lock` に保存します。
 ベースdigest・Pythonバージョンを変える場合は `scripts/linux_dev_environment.py` の検証条件も
 同じPRで更新してください。固定バージョンが配信元から消えた場合も、自動で最新版へ切り替えず

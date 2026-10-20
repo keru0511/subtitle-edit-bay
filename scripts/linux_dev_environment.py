@@ -55,6 +55,8 @@ def main() -> None:
     installed = subprocess.check_output(["dpkg-query", "-W", "-f=${binary:Package}=${Version}\n"], text=True)
     if installed != (contract / "apt.lock").read_text(encoding="utf-8"):
         raise ValueError("Linux system packages differ from runtime/linux-dev/apt.lock")
+    # The existing HTML contract tests must run rather than skip for missing Node.js.
+    subprocess.run(["node", "--version"], check=True)
     # Import ASR and repository scripts together to catch dependency namespace collisions.
     sys.path.insert(0, str(Path.cwd()))
     for module in ("scripts.run_ci_tests", "whisperx.asr", "whisperx.alignment", "torchcodec", "PySide6.QtCore"):

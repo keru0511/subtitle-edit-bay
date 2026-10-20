@@ -59,6 +59,39 @@ GitHubから `git clone` した環境では、`update.bat` をダブルクリッ
 
 Git clone環境では、追跡対象ファイルにローカル変更がある場合は安全のため停止します。ZIP環境ではGitHubから最新の `main.zip` を取得し、更新前のアプリファイルを `.local/update_backups/` に保存してから上書きします。どちらの方式でも `video_import/`、`video_export/`、`.gui/`、`.venv/`、話者色などのローカルデータは保持されます。
 
+## Linux 開発環境
+
+Linux では、字幕編集・動画出力の開発と Linux CI 相当のテストを実行できます。
+`uv`、FFmpeg/ffprobe（6〜9系）、Qt の共有ライブラリ、日本語フォントを用意してください。
+Debian/Ubuntu ではシステム依存を次のように導入できます。
+
+```bash
+sudo apt-get update
+sudo apt-get install --yes ffmpeg libegl1 libpulse0 fonts-noto-cjk
+bash scripts/setup-linux.sh
+bash scripts/run-linux.sh
+```
+
+セットアップは Python 3.10 の `.venv` と開発依存を導入し、再実行できます。
+Qt 6.12 のヘッドレス起動クラッシュを避けるため PySide6 6.11.2、型チェックの互換性のため mypy 2.3.1 を使用します。
+`uv` は公式手順（https://docs.astral.sh/uv/getting-started/installation/）で事前に導入してください。
+仮想環境・キャッシュ・ローカル設定は Git 管理外の `.venv/` と `.local/` に保存します。
+既存の `UV_*`、`XDG_*` 環境変数は尊重します。既存の `.venv` が Python 3.10 以外の場合は、退避してから再実行してください。
+
+起動スクリプトは作業ディレクトリをリポジトリへ移し、任意の開発コマンドも実行できます。
+
+```bash
+bash scripts/run-linux.sh python scripts/check_unittest_discovery.py
+RUN_FFMPEG_SMOKE=1 bash scripts/run-linux.sh python scripts/run_ci_tests.py --group portable-unit --group qt-gui --group ffmpeg-runtime
+bash scripts/run-linux.sh python scripts/check_quality.py --lint-only
+bash scripts/run-linux.sh python scripts/check_quality.py --type-only --type-platform linux
+```
+
+画面のない環境では Qt を自動的にオフスクリーン・ソフトウェア描画に設定します。
+GUI は表示されず終了まで動作します。音声サーバーがない場合は警告が出ます。
+画面のある Linux デスクトップでは通常の GUI 起動を使用しますが、表示・実音声再生は別途確認が必要です。
+この軽量開発環境には WhisperX の実推論用依存・モデル、GPU 設定、Windows インストーラーのビルド環境は含みません。
+
 ## 手動セットアップ
 
 Python 3.10とFFmpeg/ffprobeを手動で用意し、プロジェクト専用の `.venv` にWhisperXと字幕レイアウト依存を導入します。

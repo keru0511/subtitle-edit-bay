@@ -54,7 +54,7 @@ done
 
 uv venv --allow-existing --python "$PYTHON_VERSION" "$VIRTUAL_ENV"
 uv pip sync --python "$VIRTUAL_ENV/bin/python" --torch-backend cpu \
-    --require-hashes --only-binary=:all: --strict runtime/linux-dev/requirements.lock
+    --require-hashes --only-binary=:all: --reinstall --strict runtime/linux-dev/requirements.lock
 python -m pip check
 python - "$(ffmpeg -version | awk 'NR == 1 {print $3}')" <<'PY'
 import sys

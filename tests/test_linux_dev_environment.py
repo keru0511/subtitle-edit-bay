@@ -68,6 +68,13 @@ class LinuxSetupTests(TypedTestCase):
             "XDG_RUNTIME_DIR": str(root / "run"),
         }
 
+    def _settings(self, root: Path) -> dict[str, str]:
+        return dict(
+            (line.partition("=")[0], line.partition("=")[2])
+            for line in (root / "runtime/linux-dev/toolchain.env").read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        )
+
     def test_activation_selects_repository_tools_from_another_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self._copy_setup(directory)
@@ -90,9 +97,21 @@ class LinuxSetupTests(TypedTestCase):
             self.assertTrue(lines[2].startswith(str(root / ".local/linux-dev/ffmpeg-")))
             self.assertEqual(lines[3], "offscreen")
 
-    def test_hash_mismatch_stops_before_installing_or_executing_the_download(self) -> None:
+    def test_hash_mismatch_stops_before_installing_or_reusing_a_stale_download(self) -> None:
+        for cached in (False, True):
+            with self.subTest(cached=cached):
+                self._check_hash_mismatch(cached=cached)
+
+    def _check_hash_mismatch(self, *, cached: bool) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self._copy_setup(directory)
+            uv_directory = root / ".local/linux-dev" / ("uv-" + self._settings(root)["UV_VERSION"])
+            if cached:
+                uv_directory.mkdir(parents=True)
+                (uv_directory / ".installed").write_text("old-checksum\n", encoding="utf-8")
+                uv = uv_directory / "uv"
+                uv.write_text("#!/bin/bash\nexit 97\n", encoding="utf-8")
+                uv.chmod(0o755)
             tools = root / "fake-tools"
             tools.mkdir()
             for name, body in (
@@ -114,9 +133,40 @@ class LinuxSetupTests(TypedTestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("SHA-256 mismatch:", result.stderr)
-            self.assertEqual(list((root / ".local/linux-dev").glob("uv-*/.installed")), [])
+            self.assertIn("uv-x86_64-unknown-linux-gnu.tar.gz", result.stderr)
+            if cached:
+                self.assertEqual((uv_directory / ".installed").read_text(encoding="utf-8"), "old-checksum\n")
+            else:
+                self.assertFalse((uv_directory / ".installed").exists())
             self.assertEqual(list((root / ".local/linux-dev").glob("download.*")), [])
             self.assertFalse((root / ".venv").exists())
+
+    def test_missing_cached_executable_fails_before_using_host_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._copy_setup(directory)
+            settings = self._settings(root)
+            state = root / ".local/linux-dev"
+            for name, checksum in (
+                ("uv-" + settings["UV_VERSION"], settings["UV_SHA256"]),
+                ("node-" + settings["NODE_VERSION"], settings["NODE_SHA256"]),
+                ("ffmpeg-" + settings["FFMPEG_BUILD"], settings["FFMPEG_SHA256"]),
+            ):
+                destination = state / name
+                destination.mkdir(parents=True)
+                (destination / ".installed").write_text(checksum + "\n", encoding="utf-8")
+            uv = state / ("uv-" + settings["UV_VERSION"]) / "uv"
+            uv.write_text("#!/bin/bash\necho unexpected-uv-execution >&2\nexit 97\n", encoding="utf-8")
+            uv.chmod(0o755)
+            result = subprocess.run(
+                ["bash", str(root / "scripts/setup_linux.sh")],
+                env=self._environment(root),
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Missing tool executable:", result.stderr)
+            self.assertIn(str(state / ("node-" + settings["NODE_VERSION"]) / "bin/node"), result.stderr)
+            self.assertNotIn("unexpected-uv-execution", result.stderr)
 
 
 if __name__ == "__main__":

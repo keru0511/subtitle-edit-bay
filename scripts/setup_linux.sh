@@ -20,7 +20,9 @@ fi
 
 install_archive() (
     url=$1 checksum=$2 destination=$3
-    [[ ! -f "$destination/.installed" ]] || exit 0
+    if [[ -f "$destination/.installed" && "$(cat "$destination/.installed")" == "$checksum" ]]; then
+        exit 0
+    fi
     temporary=$(mktemp -d "$linux_state_dir/download.XXXXXX")
     trap 'rm -rf -- "$temporary"' EXIT
     curl --fail --location --silent --show-error --retry 3 "$url" -o "$temporary/archive"
@@ -30,7 +32,8 @@ install_archive() (
     }
     mkdir "$temporary/unpacked"
     tar -xf "$temporary/archive" --strip-components=1 -C "$temporary/unpacked"
-    touch "$temporary/unpacked/.installed"
+    printf '%s\n' "$checksum" > "$temporary/unpacked/.installed"
+    rm -rf -- "$destination"
     mv "$temporary/unpacked" "$destination"
 )
 
@@ -40,6 +43,14 @@ install_archive "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linu
     "$NODE_SHA256" "$linux_state_dir/node-$NODE_VERSION"
 install_archive "https://github.com/BtbN/FFmpeg-Builds/releases/download/$FFMPEG_BUILD/$FFMPEG_ARCHIVE" \
     "$FFMPEG_SHA256" "$linux_state_dir/ffmpeg-$FFMPEG_BUILD"
+
+for executable in "$linux_state_dir/uv-$UV_VERSION/uv" "$linux_state_dir/node-$NODE_VERSION/bin/node" \
+    "$linux_state_dir/ffmpeg-$FFMPEG_BUILD/bin/ffmpeg" "$linux_state_dir/ffmpeg-$FFMPEG_BUILD/bin/ffprobe"; do
+    [[ -x "$executable" ]] || {
+        echo "Missing tool executable: $executable. Remove its tool directory and rerun setup." >&2
+        exit 1
+    }
+done
 
 uv venv --allow-existing --python "$PYTHON_VERSION" "$VIRTUAL_ENV"
 uv pip sync --python "$VIRTUAL_ENV/bin/python" --torch-backend cpu \

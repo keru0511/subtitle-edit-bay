@@ -3,6 +3,11 @@
 通常のCIでは、テストを実行環境への依存度ごとに分けます。分類の正本は
 `tests/ci_test_groups.json`、実行入口は `scripts/run_ci_tests.py` です。
 
+Linuxの通常CI・リリース検証・クラウド開発は、同じセットアップスクリプト、
+Python依存lock、FFmpeg/ffprobe・Node.jsを使用します。
+準備後に `source runtime/linux-dev/env.sh` を実行すれば、以下のコマンドをそのまま使えます。
+詳細は [Linux共通環境](../runtime/linux-dev/README.md) を参照してください。
+
 ## 分類と実行環境
 
 | グループ | 実行環境 | 対象 |

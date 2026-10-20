@@ -11,14 +11,17 @@
 例: `src/subtitles/render_ass.py` を作ったら、`tests/subtitles/test_render_ass.py` を追加します。
 
 ## Build, Test, and Development Commands
-まだビルドツールは未導入です。Python ベースで進める場合は、次のような最小構成を揃えてください。
+Linux CI・クラウド開発では `bash scripts/setup_linux.sh` で共有環境を用意し、
+`source runtime/linux-dev/env.sh` を実行してからPython・GUI・テストを実行します。
+Python依存とFFmpeg/ffprobe・Node.jsは共有lockとツール定義に固定します。
+Windows用lockや旧 `.cloud-setup` から別のLinux環境を生成しないでください。
+依存更新時は共有lockも同じPRで更新します。手順は
+[Linux共通環境](runtime/linux-dev/README.md) を参照してください。
 
 - `git status` : 作業ツリーの確認
 - `git diff` : 変更内容の確認
-- `pytest` : テスト全体の実行
-- `python -m src.<module>` : モジュール単位のローカル実行
-
-将来 `ffmpeg` や `WhisperX` を使う場合も、手順は `README` または `docs/` に固定コマンドとして残してください。
+- `python scripts/run_ci_tests.py --group portable-unit` : 単体テスト
+- `python -m src.<module>` : モジュール単位の実行
 
 ## Coding Style & Naming Conventions
 Python を使う場合は 4 スペースインデント、タブは禁止です。命名は次に統一します。

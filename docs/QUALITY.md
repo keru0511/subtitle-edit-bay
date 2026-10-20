@@ -4,6 +4,10 @@ This repository uses a staged quality gate. The first enforced gate is intention
 
 ## Local commands
 
+Linux・クラウドでは `bash scripts/setup_linux.sh` の後、
+`source runtime/linux-dev/env.sh` を実行してから以下の検証コマンドを使用します。
+依存の個別インストールは不要です。[共通環境の手順](../runtime/linux-dev/README.md) を参照してください。
+
 Install runtime dependencies:
 
 ```powershell

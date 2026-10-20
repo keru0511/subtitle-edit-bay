@@ -8,7 +8,6 @@ from copy import deepcopy
 from uuid import uuid4
 
 from PySide6.QtCore import (
-    QModelIndex,
     QObject,
 )
 

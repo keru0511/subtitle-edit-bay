@@ -1,105 +1,162 @@
+"""App-server fixture for integration tests against the official SDK."""
+
 from __future__ import annotations
 
 import json
 import sys
-import time
-from collections.abc import Mapping
-from typing import TextIO, TypeGuard, cast
+from pathlib import Path
+from typing import TextIO, cast
+
+from src.data_boundary import is_object_list, is_string_object_mapping
 
 
-def _is_string_object_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
-    return isinstance(value, Mapping) and all(isinstance(key, str) for key in value)
+def send(value: dict[str, object]) -> None:
+    print(json.dumps(value, ensure_ascii=False), flush=True)
 
 
-def _send(payload: dict[str, object], *, partial: bool = False) -> None:
-    encoded = json.dumps(payload, ensure_ascii=False) + "\n"
-    if partial:
-        midpoint = max(1, len(encoded) // 2)
-        sys.stdout.write(encoded[:midpoint])
-        sys.stdout.flush()
-        time.sleep(0.01)
-        sys.stdout.write(encoded[midpoint:])
-    else:
-        sys.stdout.write(encoded)
-    sys.stdout.flush()
+def notification(method: str, params: dict[str, object]) -> None:
+    send({"method": method, "params": params})
+
+
+def thread_response(thread_id: str) -> dict[str, object]:
+    return {
+        "approvalPolicy": "never",
+        "approvalsReviewer": "user",
+        "cwd": str(Path.cwd()),
+        "model": "fixture",
+        "modelProvider": "openai",
+        "sandbox": {"type": "readOnly"},
+        "thread": {
+            "id": thread_id,
+            "cliVersion": "0.163.0",
+            "createdAt": 1,
+            "updatedAt": 1,
+            "cwd": str(Path.cwd()),
+            "ephemeral": True,
+            "modelProvider": "openai",
+            "preview": "",
+            "sessionId": "fixture-session",
+            "source": "cli",
+            "status": {"type": "idle"},
+            "turns": [],
+        },
+    }
 
 
 def main() -> None:
-    input_stream = cast(TextIO, sys.stdin)
-    for line in input_stream:
-        try:
-            raw_request: object = json.loads(line)
-        except json.JSONDecodeError:
+    log_path = Path(sys.argv[1])
+    pending_approval: object = None
+    pending_turn: str | None = None
+    counter = 0
+    for line in cast(TextIO, sys.stdin):
+        message: object = json.loads(line)
+        if not is_string_object_mapping(message):
+            raise ValueError("invalid fixture request")
+        with log_path.open("a", encoding="utf-8") as log:
+            log.write(json.dumps(message) + "\n")
+        request_id = message.get("id")
+        method = message.get("method")
+        raw_params = message.get("params")
+        params = raw_params if is_string_object_mapping(raw_params) else {}
+        if method is None:
+            if request_id == "fixture-approval" and pending_approval:
+                send({"id": pending_approval, "result": message.get("result")})
+                pending_approval = None
             continue
-        if not _is_string_object_mapping(raw_request):
+        if request_id is None:
             continue
-        request = raw_request
-        method = request.get("method")
-        request_id = request.get("id")
-        raw_params = request.get("params")
-        params: Mapping[str, object] = raw_params if _is_string_object_mapping(raw_params) else {}
+        result: dict[str, object] = {}
         if method == "initialize":
-            _send({"jsonrpc": "2.0", "id": request_id, "result": {"protocolVersion": "1"}}, partial=True)
-        elif method == "initialized":
-            continue
+            result = {"userAgent": "codex/0.163.0"}
         elif method == "account/read":
-            _send({"jsonrpc": "2.0", "id": request_id, "result": {"authenticated": False}})
+            result = {"account": None, "requiresOpenaiAuth": False}
         elif method == "account/login/start":
-            _send(
-                {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "result": {
-                        "loginId": "login-1",
-                        "url": "https://example.invalid/login",
-                        "receivedType": params.get("type"),
-                    },
-                }
-            )
+            result = {"type": "chatgpt", "loginId": "fixture-login", "authUrl": "https://example.invalid/login"}
+            notification("account/login/completed", {"loginId": "fixture-login", "success": True})
         elif method == "account/login/cancel":
-            _send({"jsonrpc": "2.0", "id": request_id, "result": {"cancelled": True}})
-        elif method == "account/logout":
-            _send({"jsonrpc": "2.0", "id": request_id, "result": {}})
+            result = {"status": "canceled"}
         elif method == "model/list":
-            _send(
-                {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "result": {"data": [{"id": "gpt-test", "displayName": "GPT Test", "isDefault": True}]},
-                }
-            )
-        elif method == "thread/start":
-            _send({"jsonrpc": "2.0", "id": request_id, "result": {"threadId": "thread-1"}})
-        elif method == "thread/resume":
-            _send({"jsonrpc": "2.0", "id": request_id, "result": {"threadId": params.get("threadId")}})
+            result = {
+                "data": [
+                    {
+                        "id": "fixture",
+                        "model": "fixture",
+                        "displayName": "Fixture",
+                        "description": "",
+                        "hidden": False,
+                        "isDefault": True,
+                        "defaultReasoningEffort": "medium",
+                        "supportedReasoningEfforts": [],
+                    }
+                ]
+            }
+        elif method in ("thread/start", "thread/resume"):
+            result = thread_response(str(params.get("threadId", "fixture-thread")))
+        elif method == "mcpServerStatus/list":
+            result = {"data": [], "nextCursor": None}
         elif method == "turn/start":
-            sys.stdout.write("not-json\n")
-            sys.stdout.flush()
-            _send({"jsonrpc": "2.0", "method": "turn/started", "params": {"turnId": "turn-1"}})
-            _send({"jsonrpc": "2.0", "method": "item/agentMessage/delta", "params": {"delta": "提案"}})
-            _send(
-                {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "result": {
-                        "turnId": "turn-1",
-                        "status": "completed",
-                        "receivedInput": params.get("input"),
-                        "receivedModel": params.get("model"),
-                    },
-                }
-            )
+            counter += 1
+            turn_id = f"turn-{counter}"
+            inputs = params.get("input")
+            assert is_object_list(inputs) and inputs and is_string_object_mapping(inputs[0])
+            prompt = str(inputs[0].get("text", ""))
+            turn: dict[str, object] = {"id": turn_id, "items": [], "status": "inProgress"}
+            result = {"turn": turn}
+            notification("turn/started", {"threadId": "fixture-thread", "turn": turn})
+            if prompt == "wait":
+                pending_turn = turn_id
+            else:
+                proposal: dict[str, object] = {"summary": "修正", "operations": [], "warnings": []}
+                text = json.dumps(proposal, ensure_ascii=False)
+                if prompt == "invalid-json":
+                    text = "invalid JSON"
+                elif prompt == "oversize":
+                    text = "x" * (128 * 1024 + 1)
+                elif not params.get("outputSchema"):
+                    text = "SDK応答"
+                items: list[dict[str, object]] = []
+                if prompt != "no-message":
+                    notification(
+                        "item/agentMessage/delta",
+                        {"threadId": "fixture-thread", "turnId": turn_id, "itemId": "item-1", "delta": text},
+                    )
+                    item: dict[str, object] = {"id": "item-1", "type": "agentMessage", "text": text}
+                    if prompt == "phase-order":
+                        item["phase"] = "final_answer"
+                    items.append(item)
+                    notification(
+                        "item/completed",
+                        {"threadId": "fixture-thread", "turnId": turn_id, "item": item, "completedAtMs": 1},
+                    )
+                    if prompt == "phase-order":
+                        notification(
+                            "item/completed",
+                            {
+                                "threadId": "fixture-thread",
+                                "turnId": turn_id,
+                                "completedAtMs": 2,
+                                "item": {"id": "after-final", "type": "agentMessage", "text": "補足のコメント"},
+                            },
+                        )
+                notification(
+                    "turn/completed",
+                    {"threadId": "fixture-thread", "turn": {"id": turn_id, "items": items, "status": "completed"}},
+                )
         elif method == "turn/interrupt":
-            _send({"jsonrpc": "2.0", "id": request_id, "result": {"interrupted": True}})
+            notification(
+                "turn/completed",
+                {"threadId": "fixture-thread", "turn": {"id": pending_turn, "items": [], "status": "interrupted"}},
+            )
+        elif method in ("test/approval", "test/unknown"):
+            pending_approval = request_id
+            request_method = "item/commandExecution/requestApproval" if method == "test/approval" else "item/tool/call"
+            send({"id": "fixture-approval", "method": request_method, "params": {}})
+            continue
         elif method == "test/timeout":
             continue
         elif method == "test/exit":
             return
-        elif method == "test/approval":
-            _send({"jsonrpc": "2.0", "id": 900, "method": "command/approval/request", "params": {"command": "del all"}})
-            _send({"jsonrpc": "2.0", "id": request_id, "result": {"approvalRequestSent": True}})
-        else:
-            _send({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": "method not found"}})
+        send({"id": request_id, "result": result})
 
 
 if __name__ == "__main__":

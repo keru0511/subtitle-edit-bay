@@ -52,7 +52,6 @@ from src.audio_preview_cache import (
 )
 from src import updater
 from src.codex_actions import ActionResult, ActionScope, ActionStatus
-from src.codex_runtime import CodexRuntimeInfo
 from src.gui import EditBayBackend, build_font_choices
 from src.gui_codex_chat_state import CodexChatSnapshot
 from src.gui_codex_state import CodexSessionSnapshot
@@ -4188,18 +4187,10 @@ Window {
             self.app.refreshDependencies()
         self.assertIn("[runtime] 依存関係:", self.app.logText)
 
-        runtime = CodexRuntimeInfo(
-            available=True,
-            executable="codex",
-            version="codex-cli 0.99.0",
-            distribution="git",
-        )
-        with patch("src.gui_ai_facade.detect_codex", return_value=runtime):
-            client = self.app._create_codex_chat_client()
-        self.assertIsNotNone(client.log_callback)
+        self.app._create_codex_chat_client()
         log_thread = threading.Thread(
-            target=client.log_callback,
-            args=(f"request initialize token={secret}",),
+            target=self.app._queue_codex_system_log,
+            args=(f"SDK初期化 token={secret}",),
         )
         log_thread.start()
         log_thread.join(timeout=1)
@@ -4216,8 +4207,8 @@ Window {
                 error=f"Codexへ接続できません token={secret}",
             )
         )
-        self.assertIn("Codex CLI検出成功", self.app.logText)
-        self.assertIn("request initialize", self.app.logText)
+        self.assertIn("Codex SDK初期化", self.app.logText)
+        self.assertIn("SDK初期化", self.app.logText)
         self.assertIn("Codex状態: connection=error", self.app.logText)
         self.assertNotIn(secret, self.app.logText)
         self.assertNotIn("private-login", self.app.logText)

@@ -1,114 +1,19 @@
 from __future__ import annotations
 
+import time
 import unittest
-from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from src.ai_provider import AIProviderEvent, AIProviderPrompt
 from src.codex_ai_provider import CodexAIProvider
-from src.codex_app_server_client import CodexNotification
+from tests.codex_fixtures import FakeSDKClient
+from tests.codex_fixtures import notification as CodexNotification
 from tests.typed_case import TypedTestCase
 
 
-class FakeCodexClient:
+class FakeCodexClient(FakeSDKClient):
     def __init__(self, *, authenticated: bool = True) -> None:
-        self.notification_callback: Callable[[CodexNotification], None] | None = None
-        self.disconnect_callback: Callable[[Exception], None] | None = None
-        self.authenticated = authenticated
-        self.started = False
-        self.thread_params: dict[str, object] = {}
-        self.resume_params: dict[str, object] = {}
-        self.turn_params: dict[str, object] = {}
-        self.interrupted: tuple[str, str] | None = None
-
-    def start(self) -> dict[str, object]:
-        self.started = True
-        return {}
-
-    def stop(self) -> None:
-        self.started = False
-
-    def account_read(self, *, refresh_token: bool = False) -> dict[str, object]:
-        if self.authenticated:
-            return {"account": {"type": "chatgpt", "planType": "plus"}}
-        return {"account": None, "requiresOpenaiAuth": True}
-
-    def account_login_start(
-        self,
-        *,
-        login_type: str = "chatgpt",
-        use_hosted_login_success_page: bool = True,
-        app_brand: str = "chatgpt",
-    ) -> dict[str, object]:
-        return {"loginId": "login-1", "authUrl": "https://example.invalid/login"}
-
-    def account_logout(self) -> dict[str, object]:
-        self.authenticated = False
-        return {}
-
-    def model_list(self, *, limit: int = 100, include_hidden: bool = False) -> dict[str, object]:
-        return {
-            "data": [
-                {"id": "gpt-default", "displayName": "Default", "isDefault": True},
-                {"id": "gpt-hidden", "displayName": "Hidden", "hidden": True},
-            ]
-        }
-
-    def thread_start(self, params: Mapping[str, object] | None = None) -> dict[str, object]:
-        self.thread_params = dict(params or {})
-        return {"thread": {"id": "thread-1"}}
-
-    def thread_resume(
-        self,
-        thread_id: str,
-        *,
-        model: str | None = None,
-        cwd: str | Path | None = None,
-        approval_policy: str | None = None,
-        sandbox: str | None = None,
-    ) -> dict[str, object]:
-        self.resume_params = {
-            "thread_id": thread_id,
-            "model": model,
-            "cwd": cwd,
-            "approval_policy": approval_policy,
-            "sandbox": sandbox,
-        }
-        return {"thread": {"id": thread_id}}
-
-    def turn_start(
-        self,
-        *,
-        thread_id: str,
-        prompt: str,
-        model: str | None = None,
-        cwd: str | Path | None = None,
-        approval_policy: str | None = None,
-        sandbox_policy: Mapping[str, object] | None = None,
-    ) -> dict[str, object]:
-        self.turn_params = {
-            "thread_id": thread_id,
-            "prompt": prompt,
-            "model": model,
-            "cwd": cwd,
-            "approval_policy": approval_policy,
-            "sandbox_policy": sandbox_policy,
-        }
-        if self.notification_callback:
-            self.notification_callback(CodexNotification("turn/started", {"turn": {"id": "turn-1"}}))
-            self.notification_callback(CodexNotification("item/agentMessage/delta", {"delta": "返"}))
-            self.notification_callback(
-                CodexNotification(
-                    "item/completed",
-                    {"item": {"type": "agentMessage", "text": "返答"}},
-                )
-            )
-            self.notification_callback(CodexNotification("turn/completed", {"turn": {"status": "completed"}}))
-        return {"turn": {"id": "turn-1"}}
-
-    def turn_interrupt(self, turn_id: str, *, thread_id: str) -> dict[str, object]:
-        self.interrupted = (thread_id, turn_id)
-        return {}
+        super().__init__(authenticated=authenticated, fast_model=False)
 
 
 class CodexAIProviderTests(TypedTestCase):
@@ -146,6 +51,9 @@ class CodexAIProviderTests(TypedTestCase):
             {"type": "readOnly", "networkAccess": False},
         )
         self.assertEqual(client.interrupted, ("thread-1", "turn-1"))
+        deadline = time.monotonic() + 2
+        while not any(event.kind == "turn_completed" for event in events) and time.monotonic() < deadline:
+            time.sleep(0.01)
         stream_events = {
             "turn_started",
             "text_delta",
@@ -154,7 +62,7 @@ class CodexAIProviderTests(TypedTestCase):
         }
         self.assertEqual(
             [event.kind for event in events if event.kind in stream_events],
-            ["turn_started", "text_delta", "message_completed", "turn_completed"],
+            ["turn_started", "text_delta", "text_delta", "message_completed", "turn_completed"],
         )
 
     def test_unauthenticated_account_has_no_models_and_login_state_is_generic(self) -> None:
@@ -171,7 +79,7 @@ class CodexAIProviderTests(TypedTestCase):
 
     def test_connection_failure_is_exposed_as_provider_error_state(self) -> None:
         class BrokenClient(FakeCodexClient):
-            def start(self) -> dict[str, object]:
+            def start(self) -> None:
                 raise OSError("secret local path")
 
         provider = CodexAIProvider(client_factory=BrokenClient)
@@ -186,8 +94,7 @@ class CodexAIProviderTests(TypedTestCase):
         events: list[AIProviderEvent] = []
         provider.subscribe(events.append)
         provider.connect()
-        callback = client.notification_callback
-        assert callback is not None
+        callback = provider._on_notification
 
         for turn in (
             {"status": "failed"},

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-import time
 import threading
+import time
 import unittest
 from typing import Callable, Mapping
+from unittest.mock import patch
+
+from openai_codex.generated import v2_all as v2
+from openai_codex.models import JsonObject
 
 from src.data_boundary import is_object_mapping
 from src.gui_codex_state import (
@@ -12,54 +16,12 @@ from src.gui_codex_state import (
     CodexSessionSnapshot,
     build_codex_context,
 )
+from tests.codex_fixtures import FakeSDKClient, fake_structured_turn
 from tests.typed_case import TypedTestCase
 
 
-class FakeNotification:
-    def __init__(self, method: str, params: dict[str, object]) -> None:
-        self.method = method
-        self.params = params
-
-
-class FakeClient:
-    def __init__(self) -> None:
-        self.notification_callback: Callable[[FakeNotification], None] | None = None
-        self.started = False
-        self.interrupted: tuple[str, str] | None = None
-        self.thread_params: dict[str, object] | None = None
-        self.turn_params: dict[str, object] | None = None
-
-    def start(self) -> dict[str, object]:
-        self.started = True
-        return {"protocolVersion": "1"}
-
-    def stop(self) -> None:
-        self.started = False
-
-    def account_read(self) -> dict[str, object]:
-        return {"authenticated": True}
-
-    def thread_start(self, params: Mapping[str, object] | None = None) -> dict[str, object]:
-        self.thread_params = dict(params or {})
-        return {"threadId": "thread-1"}
-
-    def thread_resume(self, thread_id: str, params: Mapping[str, object] | None = None) -> dict[str, object]:
-        return {"threadId": thread_id}
-
-    def turn_start(self, **kwargs: object) -> dict[str, object]:
-        self.turn_params = dict(kwargs)
-        if self.notification_callback:
-            self.notification_callback(FakeNotification("turn/started", {"turnId": "turn-1"}))
-            self.notification_callback(FakeNotification("item/agentMessage/delta", {"delta": "提案"}))
-        return {
-            "summary": "修正",
-            "warnings": [],
-            "operations": [{"type": "update_segment", "segment_id": "s1", "changes": {"text": "修正"}}],
-        }
-
-    def turn_interrupt(self, turn_id: str, *, thread_id: str) -> dict[str, object]:
-        self.interrupted = (thread_id, turn_id)
-        return {"interrupted": True}
+class FakeClient(FakeSDKClient):
+    pass
 
 
 class BlockingAccountClient(FakeClient):
@@ -68,28 +30,22 @@ class BlockingAccountClient(FakeClient):
         self.account_entered = threading.Event()
         self.account_release = threading.Event()
 
-    def account_read(self) -> dict[str, object]:
+    def account_read(self, params: v2.GetAccountParams | JsonObject | None = None) -> v2.GetAccountResponse:
         self.account_entered.set()
         self.account_release.wait(2)
-        return {"authenticated": True}
+        return super().account_read(params)
 
 
 class IsolatedClient(FakeClient):
-    def __init__(self) -> None:
-        super().__init__()
-        self.mcp_calls: list[dict[str, object]] = []
-        self.structured_kwargs: dict[str, object] | None = None
-
-    def mcp_server_status_list(self, **kwargs: object) -> dict[str, object]:
-        self.mcp_calls.append(dict(kwargs))
-        return {"data": []}
-
-    def run_structured_turn(self, **kwargs: object) -> dict[str, object]:
-        self.structured_kwargs = dict(kwargs)
-        return {"summary": "修正", "warnings": [], "operations": []}
+    pass
 
 
 class GuiCodexStateTests(TypedTestCase):
+    def setUp(self) -> None:
+        patcher = patch("src.gui_codex_state.run_structured_turn", side_effect=fake_structured_turn)
+        self.addCleanup(patcher.stop)
+        patcher.start()
+
     def test_context_supports_all_scopes_without_media_paths(self) -> None:
         project = {
             "video": {"path": "C:/secret/video.mkv"},
@@ -120,7 +76,7 @@ class GuiCodexStateTests(TypedTestCase):
         snapshots: list[CodexSessionSnapshot] = []
         messages: list[str] = []
         controller = CodexSessionController(
-            client_factory=lambda: client,
+            client_factory=lambda cwd: client,
             proposal_parser=lambda payload: payload,
             on_state=snapshots.append,
             on_message=messages.append,
@@ -144,19 +100,12 @@ class GuiCodexStateTests(TypedTestCase):
             },
         )
         assert client.turn_params is not None
-        self.assertEqual(client.turn_params["approval_policy"], "never")
-        self.assertEqual(
-            client.turn_params["sandbox_policy"],
-            {
-                "type": "readOnly",
-                "networkAccess": False,
-            },
-        )
+        self.assertEqual(client.turn_params["context"], {"segments": []})
 
     def test_isolated_turn_disables_tools_and_uses_structured_client(self) -> None:
         client = IsolatedClient()
 
-        def create_client(*, cwd: str) -> IsolatedClient:
+        def create_client(cwd: str | None = None) -> IsolatedClient:
             return client
 
         controller = CodexSessionController(
@@ -179,15 +128,14 @@ class GuiCodexStateTests(TypedTestCase):
         self.assertEqual(config["web_search"], "disabled")
         structured = client.structured_kwargs
         assert structured is not None
-        self.assertEqual(structured["approval_policy"], "never")
-        self.assertEqual(structured["sandbox_policy"], {"type": "readOnly", "networkAccess": False})
+        self.assertIsInstance(structured["cwd"], str)
 
     def test_stop_during_blocking_account_read_discards_late_worker_result(self) -> None:
         client = BlockingAccountClient()
         snapshots: list[CodexSessionSnapshot] = []
         proposals: list[Mapping[str, object]] = []
         controller = CodexSessionController(
-            client_factory=lambda: client,
+            client_factory=lambda cwd: client,
             proposal_parser=lambda payload: payload,
             on_state=snapshots.append,
             on_proposal=proposals.append,
@@ -207,7 +155,7 @@ class GuiCodexStateTests(TypedTestCase):
 
     def test_stop_interrupts_active_turn_with_thread_and_turn_ids(self) -> None:
         client = FakeClient()
-        controller = CodexSessionController(client_factory=lambda: client)
+        controller = CodexSessionController(client_factory=lambda cwd: client)
         controller._client = client
         controller._snapshot = CodexSessionSnapshot(
             state="running",
@@ -224,7 +172,7 @@ class GuiCodexStateTests(TypedTestCase):
         callbacks: list[Callable[[], None]] = []
         proposals: list[Mapping[str, object]] = []
         controller = CodexSessionController(
-            client_factory=FakeClient,
+            client_factory=lambda cwd: FakeClient(),
             proposal_parser=lambda payload: payload,
             on_proposal=proposals.append,
             callback_dispatcher=callbacks.append,

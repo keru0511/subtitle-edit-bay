@@ -2,3 +2,4 @@ budoux>=0.7,<1
 janome>=0.5,<1
 numpy>=1.26,<3
 PySide6>=6.8,<7
+openai-codex==0.163.0

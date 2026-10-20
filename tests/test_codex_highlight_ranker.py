@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from collections.abc import Mapping
+from unittest.mock import patch
 
 from src.codex_highlight_ranker import (
     HighlightRankerSettings,
@@ -9,31 +10,27 @@ from src.codex_highlight_ranker import (
     rank_highlight_candidates,
 )
 from src.data_boundary import is_object_mapping
+from tests.codex_fixtures import FakeSDKClient, fake_structured_turn
 from tests.typed_case import TypedTestCase
 
 
-class FakeRankerClient:
+class FakeRankerClient(FakeSDKClient):
     def __init__(self, output: object) -> None:
-        self.output = output
-        self.context: Mapping[str, object] = {}
-        self.thread_params: dict[str, object] = {}
-        self.turn_params: dict[str, object] = {}
+        super().__init__()
+        self.proposal = output
 
-    def thread_start(self, params: Mapping[str, object] | None = None) -> Mapping[str, object]:
-        self.thread_params = dict(params or {})
-        return {"threadId": "thread-highlight"}
-
-    def turn_start(self, **kwargs: object) -> Mapping[str, object]:
-        self.turn_params = dict(kwargs)
-        context = kwargs["context"]
-        if not is_object_mapping(context):
-            raise AssertionError("ranker context must be an object")
-        self.context = {str(key): value for key, value in context.items()}
-        return {"output": self.output}
+    @property
+    def context(self) -> Mapping[str, object]:
+        value = self.structured_kwargs.get("context")
+        assert is_object_mapping(value)
+        return {str(key): item for key, item in value.items()}
 
 
 class CodexHighlightRankerTests(TypedTestCase):
     def setUp(self) -> None:
+        patcher = patch("src.codex_highlight_ranker.run_structured_turn", side_effect=fake_structured_turn)
+        self.addCleanup(patcher.stop)
+        patcher.start()
         self.candidates: list[dict[str, object]] = [
             {
                 "id": "h1",
@@ -73,14 +70,6 @@ class CodexHighlightRankerTests(TypedTestCase):
                 "sandbox": "read-only",
             },
         )
-        self.assertEqual(client.turn_params["approval_policy"], "never")
-        self.assertEqual(
-            client.turn_params["sandbox_policy"],
-            {
-                "type": "readOnly",
-                "networkAccess": False,
-            },
-        )
 
     def test_unknown_id_or_invalid_output_falls_back_to_local_order(self) -> None:
         client = FakeRankerClient(
@@ -118,6 +107,17 @@ class CodexHighlightRankerTests(TypedTestCase):
         result = rank_highlight_candidates(self.candidates)
         self.assertTrue(result.fallback)
         self.assertIn("unavailable", result.error)
+
+    def test_sdk_failure_is_redacted_even_when_cleanup_fails(self) -> None:
+        client = FakeRankerClient({})
+        with (
+            patch("src.codex_highlight_ranker.run_structured_turn", side_effect=RuntimeError("token=private-token")),
+            patch.object(client, "close", side_effect=OSError("cleanup failed")),
+        ):
+            result = rank_highlight_candidates(self.candidates, client=client)
+        self.assertTrue(result.fallback)
+        self.assertEqual([item["id"] for item in result.candidates], ["h1", "h2"])
+        self.assertNotIn("private-token", result.error)
 
 
 if __name__ == "__main__":

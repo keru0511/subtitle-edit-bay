@@ -5,165 +5,21 @@ import sys
 import threading
 import time
 import unittest
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from pathlib import Path
 
-from src.codex_app_server_client import CodexNotification
+from openai_codex.generated import v2_all as v2
+from openai_codex.models import JsonObject
+
 from src.gui_codex_chat_state import CodexChatController
+from tests.codex_fixtures import FakeSDKClient, params_object, sdk_model
+from tests.codex_fixtures import notification as CodexNotification
 from tests.typed_case import TypedTestCase
 
 
-CODEX_APP_SERVER_SCHEMA_COMMIT = "3882ced09c4917b0bb528f597abd87f3c905fe47"
-
-
-class FakeChatClient:
+class FakeChatClient(FakeSDKClient):
     def __init__(self) -> None:
-        self.notification_callback: Callable[[CodexNotification], None] | None = None
-        self.disconnect_callback: Callable[[Exception], None] | None = None
-        self.authenticated = False
-        self.started = False
-        self.login_kwargs: dict[str, object] = {}
-        self.thread_params: dict[str, object] = {}
-        self.thread_start_count = 0
-        self.resumed_threads: list[tuple[str, dict[str, object]]] = []
-        self.turn_params: dict[str, object] = {}
-        self.interrupted: tuple[str, str] | None = None
-
-    def start(self) -> dict[str, object]:
-        self.started = True
-        return {"protocolVersion": "1"}
-
-    def stop(self) -> None:
-        self.started = False
-
-    def account_read(self, *, refresh_token: bool = False) -> dict[str, object]:
-        if self.authenticated:
-            return {
-                "account": {"type": "chatgpt", "planType": "plus"},
-                "requiresOpenaiAuth": True,
-            }
-        return {"account": None, "requiresOpenaiAuth": True}
-
-    def account_login_start(
-        self,
-        *,
-        login_type: str = "chatgpt",
-        use_hosted_login_success_page: bool = True,
-        app_brand: str = "chatgpt",
-    ) -> dict[str, object]:
-        self.login_kwargs = {
-            "login_type": login_type,
-            "use_hosted_login_success_page": use_hosted_login_success_page,
-            "app_brand": app_brand,
-        }
-        return {
-            "type": "chatgpt",
-            "loginId": "login-1",
-            "authUrl": "https://example.invalid/login",
-        }
-
-    def account_logout(self) -> dict[str, object]:
-        self.authenticated = False
-        return {}
-
-    def model_list(self, *, limit: int = 100, include_hidden: bool = False) -> dict[str, object]:
-        return {
-            "data": [
-                {
-                    "id": "gpt-default",
-                    "displayName": "Default",
-                    "isDefault": True,
-                    "hidden": False,
-                },
-                {
-                    "id": "gpt-fast",
-                    "displayName": "Fast",
-                    "isDefault": False,
-                    "hidden": False,
-                },
-                {"id": "hidden", "displayName": "Hidden", "hidden": True},
-            ]
-        }
-
-    def thread_start(self, params: Mapping[str, object] | None = None) -> dict[str, object]:
-        self.thread_start_count += 1
-        self.thread_params = dict(params or {})
-        return {"thread": {"id": f"thread-{self.thread_start_count}"}}
-
-    def thread_resume(
-        self,
-        thread_id: str,
-        *,
-        model: str | None = None,
-        cwd: str | Path | None = None,
-        approval_policy: str | None = None,
-        sandbox: str | None = None,
-    ) -> dict[str, object]:
-        params: dict[str, object] = {}
-        if model:
-            params["model"] = model
-        if cwd is not None:
-            params["cwd"] = str(cwd)
-        if approval_policy:
-            params["approvalPolicy"] = approval_policy
-        if sandbox:
-            params["sandbox"] = sandbox
-        self.resumed_threads.append((thread_id, params))
-        return {"thread": {"id": thread_id}}
-
-    def turn_start(
-        self,
-        *,
-        thread_id: str,
-        prompt: str,
-        model: str | None = None,
-        cwd: str | Path | None = None,
-        approval_policy: str | None = None,
-        sandbox_policy: Mapping[str, object] | None = None,
-    ) -> dict[str, object]:
-        self.turn_params = {
-            "thread_id": thread_id,
-            "prompt": prompt,
-            "model": model,
-            "cwd": cwd,
-            "approval_policy": approval_policy,
-            "sandbox_policy": sandbox_policy,
-        }
-        if self.notification_callback:
-            self.notification_callback(CodexNotification("turn/started", {"turn": {"id": "turn-1"}}))
-            self.notification_callback(CodexNotification("item/agentMessage/delta", {"delta": "返"}))
-            self.notification_callback(CodexNotification("item/agentMessage/delta", {"delta": "答"}))
-            self.notification_callback(
-                CodexNotification(
-                    "item/completed",
-                    {"item": {"type": "agentMessage", "id": "item-1", "text": "返答"}},
-                )
-            )
-            self.notification_callback(
-                CodexNotification(
-                    "turn/completed",
-                    {"turn": {"id": "turn-1", "status": "completed"}},
-                )
-            )
-        return {"turn": {"id": "turn-1", "status": "inProgress"}}
-
-    def turn_interrupt(self, turn_id: str, *, thread_id: str) -> dict[str, object]:
-        self.interrupted = (thread_id, turn_id)
-        return {}
-
-    def complete_login(self) -> None:
-        self.authenticated = True
-        if self.notification_callback:
-            self.notification_callback(
-                CodexNotification(
-                    "account/login/completed",
-                    {"loginId": "login-1", "success": True, "error": None},
-                )
-            )
-
-    def disconnect(self) -> None:
-        if self.disconnect_callback:
-            self.disconnect_callback(RuntimeError("closed"))
+        super().__init__(authenticated=False)
 
 
 class BlockingTurnStartClient(FakeChatClient):
@@ -174,29 +30,26 @@ class BlockingTurnStartClient(FakeChatClient):
 
     def turn_start(
         self,
-        *,
         thread_id: str,
-        prompt: str,
-        model: str | None = None,
-        cwd: str | Path | None = None,
-        approval_policy: str | None = None,
-        sandbox_policy: Mapping[str, object] | None = None,
-    ) -> dict[str, object]:
+        input_items: list[JsonObject] | JsonObject | str,
+        params: v2.TurnStartParams | JsonObject | None = None,
+    ) -> v2.TurnStartResponse:
+        values = params_object(params)
         self.turn_params = {
             "thread_id": thread_id,
-            "prompt": prompt,
-            "model": model,
-            "cwd": cwd,
-            "approval_policy": approval_policy,
-            "sandbox_policy": sandbox_policy,
+            "prompt": input_items,
+            "model": values.get("model"),
+            "cwd": values.get("cwd"),
+            "approval_policy": values.get("approvalPolicy"),
+            "sandbox_policy": values.get("sandboxPolicy"),
         }
         self.turn_entered.set()
         self.turn_release.wait(2)
-        return {"turn": {"id": "turn-blocked", "status": "inProgress"}}
+        return sdk_model(v2.TurnStartResponse, {"turn": {"id": "turn-blocked", "items": [], "status": "inProgress"}})
 
 
 class FailingStartClient(FakeChatClient):
-    def start(self) -> dict[str, object]:
+    def start(self) -> None:
         raise OSError("接続に失敗しました")
 
 
@@ -209,12 +62,12 @@ def wait_for(predicate: Callable[[], bool], timeout: float = 2.0) -> None:
 
 
 class CodexChatControllerTests(TypedTestCase):
-    def test_chat_state_import_does_not_require_typing_extensions(self) -> None:
+    def test_chat_state_imports_with_installed_sdk_dependencies(self) -> None:
         completed = subprocess.run(
             [
                 sys.executable,
                 "-c",
-                "import sys; sys.modules['typing_extensions'] = None; import src.gui_codex_chat_state",
+                "import src.gui_codex_chat_state",
             ],
             cwd=Path(__file__).resolve().parents[1],
             capture_output=True,
@@ -334,7 +187,6 @@ class CodexChatControllerTests(TypedTestCase):
                     "type": "readOnly",
                     "networkAccess": False,
                 },
-                CODEX_APP_SERVER_SCHEMA_COMMIT,
             )
             self.assertEqual(controller.snapshot.messages[0]["role"], "user")
             self.assertEqual(controller.snapshot.messages[1]["text"], "返答")
@@ -360,6 +212,7 @@ class CodexChatControllerTests(TypedTestCase):
             self.assertEqual(controller.snapshot.messages, ())
 
             client.disconnect()
+            wait_for(lambda: controller.snapshot.connection_state == "disconnected")
             self.assertEqual(controller.snapshot.connection_state, "disconnected")
             self.assertEqual(controller.snapshot.chat_state, "disconnected")
             self.assertIn("再接続", controller.snapshot.error)
@@ -415,6 +268,7 @@ class CodexChatControllerTests(TypedTestCase):
             self.assertEqual(controller.snapshot.thread_id, "thread-1")
 
             first_client.disconnect()
+            wait_for(lambda: controller.snapshot.connection_state == "disconnected")
             self.assertEqual(controller.snapshot.connection_state, "disconnected")
             controller.reconnect()
             wait_for(lambda: controller.snapshot.auth_state == "authenticated")
@@ -430,12 +284,10 @@ class CodexChatControllerTests(TypedTestCase):
                     "approvalPolicy": "never",
                     "sandbox": "read-only",
                 },
-                CODEX_APP_SERVER_SCHEMA_COMMIT,
             )
             self.assertNotIn(
                 "serviceName",
                 second_client.resumed_threads[0][1],
-                CODEX_APP_SERVER_SCHEMA_COMMIT,
             )
             self.assertEqual(second_client.turn_params["thread_id"], "thread-1")
             self.assertEqual(second_client.thread_start_count, 0)
@@ -463,7 +315,7 @@ class CodexChatControllerTests(TypedTestCase):
 
             wait_for(lambda: client.interrupted == ("thread-1", "turn-blocked"))
             self.assertEqual(controller.snapshot.chat_state, "stopping")
-            callback = client.notification_callback
+            callback = client.emit
             self.assertIsNotNone(callback)
             if callback is None:
                 raise AssertionError("notification callback is not registered")
@@ -495,6 +347,7 @@ class CodexChatControllerTests(TypedTestCase):
             self.assertEqual(controller.snapshot.messages[-1]["status"], "completed")
 
             client.disconnect()
+            wait_for(lambda: controller.snapshot.connection_state == "disconnected")
 
             self.assertEqual(controller.snapshot.connection_state, "disconnected")
             self.assertEqual(controller.snapshot.messages[-1]["status"], "completed")

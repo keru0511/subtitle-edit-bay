@@ -7,6 +7,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, ParamSpec, TypedDict
 
+from openai_codex.client import CodexClient
+
 from .ai_provider import (
     AIProvider,
     AIProviderEvent,
@@ -14,7 +16,7 @@ from .ai_provider import (
     AIProviderSession,
     AIProviderState,
 )
-from .codex_ai_provider import CodexAIProvider, CodexAppServerClientProtocol
+from .codex_ai_provider import CodexAIProvider
 from .codex_runtime import redact_codex_diagnostic
 
 if TYPE_CHECKING:
@@ -77,7 +79,7 @@ class CodexChatController:
     def __init__(
         self,
         *,
-        client_factory: Callable[[], CodexAppServerClientProtocol] | None = None,
+        client_factory: Callable[[], CodexClient] | None = None,
         provider_factory: Callable[[], AIProvider] | None = None,
         workspace_root: str | Path,
         preferred_model: str = "",

@@ -2,9 +2,11 @@
 
 ## セットアップ
 
-Codexチャットは、ローカルに導入済みのCodex CLIが提供するApp Serverを再利用します。通常のCLIは `codex --version` を実行できる状態でアプリを起動してください。Windows版Codex Desktopを利用している場合は、Codexが永続的なユーザーPATHへ登録されていなくても、`%LOCALAPPDATA%\OpenAI\Codex\bin` 配下のバージョン別CLIを新しい順に探索します。候補は実行前提にせず、`--version` でCodex CLI本人かつ対応バージョンであることを検証します。複数の実行ファイルがある場合は、`CODEX_EXECUTABLE` で使用するファイルを最優先指定できます。
+Codexチャットは公式Python SDK `openai-codex==0.163.0` を使用します。SDKと同じ固定版のCodex本体も、アプリのセットアップで導入されます。Codex CLIやCodex Desktopを別途導入する必要はありません。PATHの探索や `CODEX_EXECUTABLE` による実行ファイル指定は使用しません。
 
-アプリは `codex app-server --listen stdio://` を子プロセスとして起動します。待受ポートや外部WebSocketは開きません。通信仕様は[OpenAIのCodex App Serverドキュメント](https://developers.openai.com/codex/app-server)に従います。
+SDKが `codex app-server` をローカル子プロセスとして起動し、stdioで通信します。通信・プロセス管理・通知の振り分けはSDKが担当します。仕様は[公式SDKドキュメント](https://developers.openai.com/codex/sdk)と[App Serverドキュメント](https://developers.openai.com/codex/app-server)を参照してください。
+
+既存のCodex認証はSDKが標準の保存先から再利用します。未ログインの場合は、下記のログイン操作を行います。WindowsでもSDK標準のプロセス起動を使い、アプリ独自の非表示起動ラッパーは追加しません。
 
 チャット画面はprovider-neutralな `AIProvider` 境界だけを参照します。現在の実装では `CodexAIProvider` がCodex App Serverの認証、モデル、thread、turn、ストリーミング通知を共通の状態・イベントへ変換します。GUIやQMLはCodex固有のRPC名を参照しないため、追加providerは同じ境界のadapterとして実装できます。
 
@@ -38,6 +40,8 @@ Codexチャットは、ローカルに導入済みのCodex CLIが提供するApp
 - 各turnは `sandboxPolicy={type: readOnly, networkAccess: false}` で実行し、ファイル書き込みとネットワークアクセスを許可しない
 - 現行stable App Serverのread-only sandboxはローカルファイルの読み取り範囲をworkspaceだけに限定しないため、機密ファイルを含むworkspaceではチャットを使用しない
 - コマンド実行やファイル変更のapproval要求を自動承認しない
-- 入力要求、MCP elicitationなど未対応のserver requestは明示的に拒否し、応答待ちで停止させない
+- コマンド・ファイル変更の承認要求には明示的に拒否を返し、入力要求やMCP elicitationなど未知の要求では接続を閉じてエラーにする
 
 通常の質問は読み取り専用チャットへ送信します。字幕の編集依頼は型付き `propose_subtitle_edit` Actionへ振り分け、差分確認と明示適用を共通チャット内で扱います。提案をプロジェクトへ直接書き込ませたり、Codex出力だけで対象範囲や確認済み状態を拡張したりしません。
+
+接続・通常のAPI応答は30秒、編集案の生成は120秒でタイムアウトします。期限超過時にはSDK接続を閉じ、再接続では新しいクライアントを作成します。編集案の差分確認・適用・Undoはアプリ側で行います。SDKへの移行により、動画完成までの自動操作やMCP操作ツールが追加されることはありません。

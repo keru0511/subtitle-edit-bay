@@ -42,11 +42,11 @@
         "test_ci_test_groups",
         "test_codex_actions",
         "test_codex_ai_provider",
-        "test_codex_app_server_client",
         "test_codex_chat_routing",
         "test_codex_edit_proposal",
         "test_codex_highlight_ranker",
         "test_codex_runtime",
+        "test_codex_sdk",
         "test_color_config",
         "test_craig_pipeline",
         "test_craig_transcription_execution",
@@ -218,7 +218,12 @@
         "test_update_manager",
         "test_updater"
       ],
-      "selectors": []
+      "selectors": [
+        "tests.test_codex_sdk.CodexSdkTests.test_bundled_runtime_initializes",
+        "tests.test_codex_sdk.CodexSdkTests.test_deadline_closes_stalled_sdk_connection",
+        "tests.test_codex_sdk.CodexSdkTests.test_provider_receives_typed_sdk_notifications_before_start_response",
+        "tests.test_codex_sdk.CodexSdkTests.test_structured_result_progress_and_isolation_use_sdk"
+      ]
     }
   }
 }

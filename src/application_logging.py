@@ -29,14 +29,26 @@ _SECRET_PATTERNS = (
         r"[\"']?\s*[:=]\s*)([^\"'\s,;&}\]]+)"
     ),
 )
-_WINDOWS_PATH_PATTERN = re.compile(
-    r"(?<![\w])(?:[A-Za-z]:[\\/]|\\\\)[^\r\n\"'<>|?*]*?\.[A-Za-z0-9]{1,12}(?![\w])"
-)
+_WINDOWS_PATH_PATTERN = re.compile(r"(?<![\w])(?:[A-Za-z]:[\\/]|\\\\)[^\r\n\"'<>|?*]*?\.[A-Za-z0-9]{1,12}(?![\w])")
 _WINDOWS_PATH_TOKEN_PATTERN = re.compile(r"(?<![\w])(?:[A-Za-z]:[\\/]|\\\\)[^\s\"']+")
-_UNIX_PATH_PATTERN = re.compile(
-    r"(?<![\w])/(?:[^\r\n\"'<>|?*]+/)*[^\r\n\"'<>|?*]*?\.[A-Za-z0-9]{1,12}(?![\w])"
-)
-_UNIX_PATH_TOKEN_PATTERN = re.compile(r"(?<![\w])/(?:[^\s\"']+/)+[^\s\"']+")
+_UNIX_PATH_SPAN_PATTERN = re.compile(r"(?<![\w])/[^\r\n\"'<>|?*]*")
+_UNIX_PATH_EXTENSION_PATTERN = re.compile(r"\.[A-Za-z0-9]{1,12}(?![\w])")
+_UNIX_PATH_TOKEN_PATTERN = re.compile(r"(?<![\w])/[^\s\"']+")
+
+
+def _redact_unix_path_span(match: re.Match[str]) -> str:
+    path = match.group()
+    # Consume each candidate once, then locate its extension without retrying
+    # nested directory matches when a long path has no file extension.
+    last_extension_start: int | None = None
+    for extension in _UNIX_PATH_EXTENSION_PATTERN.finditer(path):
+        last_extension_start = extension.start()
+    if last_extension_start is not None:
+        directory_end = path.rfind("/", 0, last_extension_start)
+        filename_extension = _UNIX_PATH_EXTENSION_PATTERN.search(path, directory_end)
+        assert filename_extension is not None
+        path = "<local-path>" + path[filename_extension.end() :]
+    return path
 
 
 @dataclass(frozen=True)
@@ -66,7 +78,7 @@ def redact_text(value: object, *, paths: bool = False) -> str:
     if paths:
         text = _WINDOWS_PATH_PATTERN.sub("<local-path>", text)
         text = _WINDOWS_PATH_TOKEN_PATTERN.sub("<local-path>", text)
-        text = _UNIX_PATH_PATTERN.sub("<local-path>", text)
+        text = _UNIX_PATH_SPAN_PATTERN.sub(_redact_unix_path_span, text)
         text = _UNIX_PATH_TOKEN_PATTERN.sub("<local-path>", text)
     return text
 
@@ -151,26 +163,16 @@ class ApplicationLogger:
         if job:
             display_prefix += f" [{job}]"
         display = f"{display_prefix} {safe_message}\n"
-        self._memory.append(
-            (display, bool(preserve_in_memory) or bool(pin_in_memory), bool(pin_in_memory))
-        )
+        self._memory.append((display, bool(preserve_in_memory) or bool(pin_in_memory), bool(pin_in_memory)))
         self._memory_chars += len(display)
         while self._memory and self._memory_chars > self.max_memory_chars:
             removable_index = next(
-                (
-                    index
-                    for index, (_entry, preserved, _pinned) in enumerate(self._memory)
-                    if not preserved
-                ),
+                (index for index, (_entry, preserved, _pinned) in enumerate(self._memory) if not preserved),
                 None,
             )
             if removable_index is None:
                 removable_index = next(
-                    (
-                        index
-                        for index, (_entry, _preserved, pinned) in enumerate(self._memory)
-                        if not pinned
-                    ),
+                    (index for index, (_entry, _preserved, pinned) in enumerate(self._memory) if not pinned),
                     None,
                 )
             if removable_index is None:
@@ -285,4 +287,3 @@ class ApplicationLogger:
                     path.unlink(missing_ok=True)
         except OSError as error:
             self._write_error = str(error)
-

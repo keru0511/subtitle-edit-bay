@@ -101,6 +101,21 @@ class CodexSdkTests(TypedTestCase):
         self.assertTrue(result.fallback)
         self.assertEqual(self.client.model_list().data[0].id, "fixture")
 
+    def test_unsupported_server_request_closes_the_borrowed_sdk_client(self) -> None:
+        def unsupported_request(client: CodexClient, **_kwargs: object) -> dict[str, object]:
+            client.request("test/unknown", {}, response_model=TurnInterruptResponse)
+            raise AssertionError("unsupported server request was accepted")
+
+        with (
+            patch("src.codex_highlight_ranker.run_structured_turn", side_effect=unsupported_request),
+            patch.object(self.client, "close", wraps=self.client.close) as close,
+        ):
+            result = rank_highlight_candidates([], client=self.client)
+
+        self.assertTrue(result.fallback)
+        self.assertIn("未対応", result.error)
+        close.assert_called_once_with()
+
     def test_invalid_empty_and_oversized_structured_outputs_are_rejected(self) -> None:
         thread_id = self.client.thread_start().thread.id
         for prompt in ("invalid-json", "no-message", "oversize"):
@@ -207,7 +222,7 @@ class CodexSdkTests(TypedTestCase):
         self.assertIn('"decision": "decline"', self.requests.read_text(encoding="utf-8"))
 
     def test_unknown_server_request_fails_instead_of_auto_approval(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "未対応"):
+        with self.assertRaisesRegex(TransportClosedError, "未対応"):
             self.client.request("test/unknown", {}, response_model=TurnInterruptResponse)
 
     def test_deadline_closes_stalled_sdk_connection(self) -> None:

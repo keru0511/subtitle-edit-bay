@@ -10,6 +10,7 @@ from typing import Callable, Iterator, Mapping, cast
 
 from openai_codex import CodexConfig
 from openai_codex.client import CodexClient
+from openai_codex.errors import TransportClosedError
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
     ItemCompletedNotification,
@@ -28,8 +29,9 @@ MAX_STRUCTURED_OUTPUT_BYTES = 128 * 1024
 def reject_server_request(method: str, _params: JsonObject | None) -> JsonObject:
     if method in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}:
         return {"decision": "decline"}
-    # Raising releases SDK waiters; callers close this connection on failure.
-    raise RuntimeError("Codexから未対応の要求を受信しました")
+    # Raising stops the SDK reader; mark the transport unusable so callers
+    # also close borrowed clients rather than trying to reuse this connection.
+    raise TransportClosedError("Codexから未対応の要求を受信しました")
 
 
 def create_codex_client(cwd: str | Path | None = None) -> CodexClient:

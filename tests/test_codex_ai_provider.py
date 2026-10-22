@@ -4,6 +4,10 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from openai_codex.generated.v2_all import ModelListResponse
+from openai_codex.models import JsonObject
 
 from src.ai_provider import AIProviderEvent, AIProviderPrompt
 from src.codex_ai_provider import CodexAIProvider
@@ -79,6 +83,82 @@ class CodexAIProviderTests(TypedTestCase):
         self.assertEqual(state.auth_state, "login_pending")
         self.assertEqual(state.login_id, "login-1")
         self.assertEqual(state.login_url, "https://example.invalid/login")
+
+    def test_saved_model_is_selected_from_a_later_page(self) -> None:
+        client = FakeCodexClient()
+        first = client.model_list()
+        first.next_cursor = "page-2"
+        saved = first.data[0].model_copy()
+        saved.id = saved.model = "gpt-saved"
+        saved.display_name = "Saved model"
+        saved.is_default = False
+        second = ModelListResponse(data=[], next_cursor="page-3")
+        third = ModelListResponse(data=[saved])
+        pages = [second, third]
+        provider = CodexAIProvider(client_factory=lambda: client, preferred_model="gpt-saved")
+        self.addCleanup(provider.close)
+        with (
+            patch.object(client, "model_list", return_value=first),
+            patch.object(client, "request", side_effect=pages) as request,
+        ):
+            state = provider.connect()
+        for cursor in ("page-2", "page-3"):
+            params: JsonObject = {"cursor": cursor, "includeHidden": False}
+            request.assert_any_call("model/list", params, response_model=ModelListResponse)
+        self.assertEqual([model.model_id for model in state.models], ["gpt-default", "gpt-saved"])
+        self.assertEqual(state.selected_model, "gpt-saved")
+        self.assertEqual(state.error, "")
+
+    def test_invalid_model_cursor_fails_without_publishing_a_partial_list(self) -> None:
+        for cursor in ("", "repeated-cursor"):
+            with self.subTest(cursor=cursor):
+                client = FakeCodexClient()
+                page = client.model_list()
+                page.next_cursor = cursor
+                provider = CodexAIProvider(client_factory=lambda: client, preferred_model="gpt-saved")
+                self.addCleanup(provider.close)
+                with (
+                    patch.object(client, "model_list", return_value=page),
+                    patch.object(client, "request", return_value=page),
+                ):
+                    state = provider.connect()
+                self.assertEqual(state.availability, "error")
+                self.assertEqual(state.models, ())
+                self.assertEqual(state.selected_model, "gpt-saved")
+                self.assertIn("ページ", state.error)
+
+    def test_model_page_failure_does_not_mark_a_saved_model_unavailable(self) -> None:
+        client = FakeCodexClient()
+        first = client.model_list()
+        first.next_cursor = "page-2"
+        provider = CodexAIProvider(client_factory=lambda: client, preferred_model="gpt-saved")
+        self.addCleanup(provider.close)
+        with (
+            patch.object(client, "model_list", return_value=first),
+            patch.object(client, "request", side_effect=OSError("second page failed")),
+        ):
+            state = provider.connect()
+        self.assertEqual(state.availability, "error")
+        self.assertEqual(state.models, ())
+        self.assertEqual(state.selected_model, "gpt-saved")
+        self.assertIn("second page failed", state.error)
+
+    def test_model_pagination_is_bounded(self) -> None:
+        client = FakeCodexClient()
+        first = client.model_list()
+        first.next_cursor = "page-2"
+        second = ModelListResponse(data=first.data, next_cursor="page-3")
+        provider = CodexAIProvider(client_factory=lambda: client)
+        self.addCleanup(provider.close)
+        with (
+            patch("src.codex_ai_provider.MAX_MODEL_LIST_PAGES", 2),
+            patch.object(client, "model_list", return_value=first),
+            patch.object(client, "request", return_value=second),
+        ):
+            state = provider.connect()
+        self.assertEqual(state.availability, "error")
+        self.assertEqual(state.models, ())
+        self.assertIn("ページ", state.error)
 
     def test_connection_failure_is_exposed_as_provider_error_state(self) -> None:
         class BrokenClient(FakeCodexClient):

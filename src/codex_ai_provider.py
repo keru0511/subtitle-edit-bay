@@ -15,6 +15,7 @@ from openai_codex.generated.v2_all import (
     ChatgptLoginAccountResponse,
     ErrorNotification,
     ItemCompletedNotification,
+    ModelListResponse,
     TurnCompletedNotification,
     TurnStartedNotification,
 )
@@ -31,6 +32,9 @@ from .ai_provider import (
 )
 from .codex_runtime import redact_codex_diagnostic
 from .codex_sdk import sdk_deadline
+
+
+MAX_MODEL_LIST_PAGES = 100
 
 
 class CodexAIProvider:
@@ -138,13 +142,31 @@ class CodexAIProvider:
                 login_available=True,
                 error="",
             )
+        models: list[AIModel] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
         with sdk_deadline(client):
-            model_result = client.model_list(include_hidden=False)
-        models = tuple(
-            AIModel(model_id=item.id, display_name=item.display_name or item.id, is_default=item.is_default)
-            for item in model_result.data
-            if not item.hidden
-        )
+            for _page in range(MAX_MODEL_LIST_PAGES):
+                model_result = (
+                    client.model_list(include_hidden=False)
+                    if cursor is None
+                    else client.request(
+                        "model/list", {"cursor": cursor, "includeHidden": False}, response_model=ModelListResponse
+                    )
+                )
+                models.extend(
+                    AIModel(model_id=item.id, display_name=item.display_name or item.id, is_default=item.is_default)
+                    for item in model_result.data
+                    if not item.hidden
+                )
+                cursor = model_result.next_cursor
+                if cursor is None:
+                    break
+                if not cursor or cursor in seen_cursors:
+                    raise CodexAIProviderError("Codexモデル一覧のページ情報が不正です")
+                seen_cursors.add(cursor)
+            else:
+                raise CodexAIProviderError("Codexモデル一覧のページ数が上限を超えました")
         if not models:
             raise CodexAIProviderError("利用可能なCodexモデルが返されませんでした")
         available = {item.model_id for item in models}
@@ -164,7 +186,7 @@ class CodexAIProvider:
             auth_label=auth_label,
             login_url="",
             login_id="",
-            models=models,
+            models=tuple(models),
             selected_model=selected,
             login_available=True,
             error=model_error,

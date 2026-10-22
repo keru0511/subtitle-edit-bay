@@ -236,6 +236,21 @@ class GuiCodexStateTests(TypedTestCase):
         self.assertEqual(client.interrupted, ("thread-1", "turn-1"))
         self.assertEqual(controller.snapshot.state, "stopped")
 
+    def test_shutdown_closes_active_turn_without_interrupt(self) -> None:
+        client = FakeClient()
+        client.start()
+        controller = CodexSessionController(client_factory=lambda cwd: client)
+        controller._client = client
+        controller._snapshot = CodexSessionSnapshot(state="running", thread_id="thread-1", turn_id="turn-1", revision=7)
+
+        controller.shutdown()
+
+        self.assertIsNone(client.interrupted)
+        self.assertFalse(client.started)
+        self.assertTrue(controller._stop_event.is_set())
+        self.assertEqual(controller.snapshot.state, "stopped")
+        self.assertEqual(controller.snapshot.revision, 7)
+
     def test_stop_discards_queued_proposal_callback(self) -> None:
         callbacks: list[Callable[[], None]] = []
         proposals: list[Mapping[str, object]] = []

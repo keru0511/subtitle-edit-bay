@@ -195,13 +195,20 @@ class CodexSessionController:
         self._thread.start()
 
     def stop(self) -> None:
+        self._stop(interrupt=True)
+
+    def shutdown(self) -> None:
+        """Close the SDK on app exit without waiting for an interrupt RPC."""
+        self._stop(interrupt=False)
+
+    def _stop(self, *, interrupt: bool) -> None:
         with self._state_lock:
             stop_event = self._stop_event
             stop_event.set()
             generation = self._generation
             client = self._client
             snapshot = self._snapshot
-        if client is not None and snapshot.turn_id:
+        if interrupt and client is not None and snapshot.turn_id:
             try:
                 with sdk_deadline(client):
                     client.turn_interrupt(snapshot.thread_id, snapshot.turn_id)

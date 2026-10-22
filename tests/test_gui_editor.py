@@ -264,7 +264,7 @@ class GuiEditorRegressionTests(TypedTestCase):
         cls._session.cleanup()
 
     def test_app_exit_closes_codex_proposal_clients(self) -> None:
-        """Windows GUI CI必須: アプリ終了で字幕・音量提案のSDK接続も閉じる。"""
+        """Windows GUI CI必須: アプリ終了で割り込み要求を待たず字幕・音量提案のSDK接続を閉じる。"""
         script = """
 import sys
 from pathlib import Path
@@ -282,12 +282,13 @@ for session in sessions:
     client = FakeSDKClient()
     client.start()
     session._client = client
-    session._snapshot = CodexSessionSnapshot(state="running")
+    session._snapshot = CodexSessionSnapshot(state="running", thread_id="thread-1", turn_id="turn-1")
     clients.append(client)
 QTimer.singleShot(0, app.quit)
 try:
     assert app.exec() == 0
     assert all(not client.started for client in clients), "proposal SDK clients survived app exit"
+    assert all(client.interrupted is None for client in clients), "app exit sent a blocking interrupt request"
     assert all(session.snapshot.state == "stopped" for session in sessions)
 finally:
     for session in sessions:

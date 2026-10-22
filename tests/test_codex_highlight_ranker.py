@@ -4,6 +4,8 @@ import unittest
 from collections.abc import Mapping
 from unittest.mock import patch
 
+from openai_codex.errors import JsonRpcError, TransportClosedError
+
 from src.codex_highlight_ranker import (
     HighlightRankerSettings,
     build_ranker_context,
@@ -75,9 +77,47 @@ class CodexHighlightRankerTests(TypedTestCase):
         client = FakeRankerClient(
             {"rankings": [{"id": "missing", "semantic_score": 0.8, "category": "other", "reason": "", "hook": ""}]}
         )
+        client.start()
         result = rank_highlight_candidates(self.candidates, client=client)
         self.assertTrue(result.fallback)
         self.assertEqual([item["id"] for item in result.candidates], ["h1", "h2"])
+        self.assertTrue(client.started, "a local validation error closed the borrowed SDK client")
+
+    def test_invalid_weights_preserve_the_borrowed_sdk_client(self) -> None:
+        rankings = [
+            {"id": str(item["id"]), "semantic_score": 0.5, "category": "other", "reason": "", "hook": ""}
+            for item in self.candidates
+        ]
+        client = FakeRankerClient({"rankings": rankings})
+        client.start()
+
+        result = rank_highlight_candidates(
+            self.candidates, client=client, settings=HighlightRankerSettings(local_weight=0, semantic_weight=0)
+        )
+
+        self.assertTrue(result.fallback)
+        self.assertIn("weights", result.error)
+        self.assertTrue(client.started)
+
+    def test_output_and_rpc_errors_preserve_the_borrowed_sdk_client(self) -> None:
+        for error in (ValueError("invalid output"), JsonRpcError(-32602, "invalid request")):
+            with self.subTest(error=type(error).__name__):
+                client = FakeRankerClient({})
+                client.start()
+                with patch("src.codex_highlight_ranker.run_structured_turn", side_effect=error):
+                    result = rank_highlight_candidates(self.candidates, client=client)
+                self.assertTrue(result.fallback)
+                self.assertTrue(client.started)
+
+    def test_transport_failures_close_the_unusable_sdk_client(self) -> None:
+        for error in (TimeoutError("stalled"), TransportClosedError("closed"), OSError("broken transport")):
+            with self.subTest(error=type(error).__name__):
+                client = FakeRankerClient({})
+                client.start()
+                with patch("src.codex_highlight_ranker.run_structured_turn", side_effect=error):
+                    result = rank_highlight_candidates(self.candidates, client=client)
+                self.assertTrue(result.fallback)
+                self.assertFalse(client.started)
 
     def test_missing_or_duplicate_ranking_ids_fall_back_to_local_order(self) -> None:
         for rankings in (
@@ -111,10 +151,14 @@ class CodexHighlightRankerTests(TypedTestCase):
     def test_sdk_failure_is_redacted_even_when_cleanup_fails(self) -> None:
         client = FakeRankerClient({})
         with (
-            patch("src.codex_highlight_ranker.run_structured_turn", side_effect=RuntimeError("token=private-token")),
-            patch.object(client, "close", side_effect=OSError("cleanup failed")),
+            patch(
+                "src.codex_highlight_ranker.run_structured_turn",
+                side_effect=TransportClosedError("token=private-token"),
+            ),
+            patch.object(client, "close", side_effect=OSError("cleanup failed")) as close,
         ):
             result = rank_highlight_candidates(self.candidates, client=client)
+        close.assert_called_once_with()
         self.assertTrue(result.fallback)
         self.assertEqual([item["id"] for item in result.candidates], ["h1", "h2"])
         self.assertNotIn("private-token", result.error)

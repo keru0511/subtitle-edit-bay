@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Mapping, Sequence, TypedDict
 
 from openai_codex.client import CodexClient
+from openai_codex.errors import TransportClosedError
 
 from .codex_runtime import redact_codex_diagnostic
 from .codex_sdk import run_structured_turn, sdk_deadline
@@ -88,6 +89,11 @@ def rank_highlight_candidates(
     settings: HighlightRankerSettings | None = None,
     revision: int | None = None,
 ) -> HighlightRankingResult:
+    """Borrow the caller's client, closing it only on timeout/transport failure.
+
+    Output validation, ranking settings and RPC errors fall back to local
+    rankings while leaving the caller's connection available for reuse.
+    """
     settings = settings or HighlightRankerSettings()
     local = [dict(item) for item in candidates]
     context = build_ranker_context(local, settings)
@@ -108,10 +114,11 @@ def rank_highlight_candidates(
         ranked = _combine_and_sort(local, semantic, settings)
         return HighlightRankingResult(tuple(ranked), False, "", cache_key)
     except Exception as error:
-        try:
-            client.close()
-        except Exception:
-            pass
+        if isinstance(error, (OSError, TransportClosedError)):
+            try:
+                client.close()
+            except Exception:
+                pass
         return HighlightRankingResult(tuple(local), True, redact_codex_diagnostic(error), cache_key)
 
 

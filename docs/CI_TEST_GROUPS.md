@@ -20,7 +20,7 @@ Python依存lock、FFmpeg/ffprobe・Node.jsを使用します。
 | `windows-ffmpeg-runtime` | Windows | Windows版FFmpeg、Qt Multimedia、GUI音声ミキサーを実際に動かすスモークテスト |
 | `ffmpeg6-compat` | Windows | 固定したFFmpeg 6.1.1でフィルタースクリプト互換性を検証するテスト |
 
-SDK同梱Codexの起動・初期化、構造化出力と隔離設定、タイムアウト、停止・終了時の接続解放はLinuxで検証し、Windowsでも明示的なselectorで再実行します。実アカウントへのログインやモデル推論は通常CIでは実行しません。
+SDK同梱Codexの起動・初期化、構造化出力と隔離設定、タイムアウト、停止・終了時の接続解放、ランキング検証失敗後の接続再利用はLinuxで検証し、Windowsでも明示的なselectorで再実行します。実アカウントへのログインやモデル推論は通常CIでは実行しません。
 
 Windowsの `Main.qml` 起動スモークは、テストモジュールとは別に
 `Start GUI on Windows` ステップで実行します。インストーラースモークと

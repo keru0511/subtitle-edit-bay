@@ -17,6 +17,7 @@ from openai_codex.generated.v2_all import ChatgptLoginAccountResponse, TurnInter
 
 from src.ai_provider import AIProviderEvent, AIProviderPrompt
 from src.codex_ai_provider import CodexAIProvider
+from src.codex_highlight_ranker import rank_highlight_candidates
 from src.codex_isolation import build_isolated_thread_params, collect_mcp_server_names, isolated_codex_cwd
 from src.codex_sdk import create_codex_client, reject_server_request, run_structured_turn, sdk_deadline
 from src.data_boundary import decode_json, is_string_object_mapping
@@ -91,6 +92,14 @@ class CodexSdkTests(TypedTestCase):
         self.assertEqual(values["runtimeWorkspaceRoots"], [])
         self.assertEqual(values["environments"], [])
         self.assertEqual(values["sandboxPolicy"], {"type": "readOnly", "networkAccess": False})
+
+    def test_ranker_validation_failure_preserves_the_live_sdk_client(self) -> None:
+        candidates: list[dict[str, object]] = [{"id": "h1", "start": 0.0, "end": 5.0, "score": 0.5}]
+
+        result = rank_highlight_candidates(candidates, client=self.client)
+
+        self.assertTrue(result.fallback)
+        self.assertEqual(self.client.model_list().data[0].id, "fixture")
 
     def test_invalid_empty_and_oversized_structured_outputs_are_rejected(self) -> None:
         thread_id = self.client.thread_start().thread.id

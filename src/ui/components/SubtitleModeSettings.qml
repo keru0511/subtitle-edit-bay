@@ -215,12 +215,11 @@ Item {
                 required property real start
                 required property real end
                 required property string editorText
-                readonly property int sourceIndex: root.backend.subtitles.subtitleSourceIndexForRow(subtitleRow.index)
                 width: subtitleList.width
                 height: 46
                 radius: 7
-                color: root.backend.subtitles.selectedSegmentIndex === subtitleRow.sourceIndex ? "#263326" : root.raisedColor
-                border.color: root.backend.subtitles.selectedSegmentIndex === subtitleRow.sourceIndex ? root.accentColor : root.borderColor
+                color: root.backend.subtitles.filteredSelectedSegmentIndex === subtitleRow.index ? "#263326" : root.raisedColor
+                border.color: root.backend.subtitles.filteredSelectedSegmentIndex === subtitleRow.index ? root.accentColor : root.borderColor
                 Column {
                     anchors.fill: parent
                     anchors.margins: 6
@@ -231,7 +230,8 @@ Item {
                 MouseArea {
                     anchors.fill: parent
                     onClicked: {
-                        root.backend.subtitles.selectSegment(subtitleRow.sourceIndex)
+                        root.backend.subtitles.selectSegment(
+                            root.backend.subtitles.subtitleSourceIndexForRow(subtitleRow.index))
                         root.seekRequested(subtitleRow.start * 1000)
                     }
                 }

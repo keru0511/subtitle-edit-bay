@@ -19,6 +19,21 @@ from src.gui_base import LegacyEditBayBackend
 from tests.typed_case import TypedTestCase
 
 
+SUBTITLE_CLIP_PROPERTIES = {
+    "filteredSubtitleModel": ("QObject*", True),
+    "subtitleClipFilterId": ("QString", False),
+    "subtitleClipHasTranscript": ("bool", False),
+    "subtitleClipSourceWindow": ("QVariantMap", False),
+    "filteredSegmentCount": ("int", False),
+    "filteredSelectedSegmentIndex": ("int", False),
+}
+SUBTITLE_CLIP_METHODS = {
+    "subtitleClipFilterChanged()": "void",
+    "subtitleSourceIndexForRow(int)": "int",
+    "setSubtitleClipFilter(QString)": "bool",
+}
+
+
 class GuiBackendMetaObjectTests(TypedTestCase):
     def test_feature_facades_expose_typed_properties_slots_and_notify_signals(self) -> None:
         backend_meta = cast(QMetaObject, getattr(EditBayBackend, "staticMetaObject"))
@@ -43,6 +58,8 @@ class GuiBackendMetaObjectTests(TypedTestCase):
                     prop = meta.property(index)
                     raw_name = prop.name()
                     property_name = raw_name if isinstance(raw_name, str) else bytes(raw_name).decode()
+                    if name == "subtitles" and property_name in SUBTITLE_CLIP_PROPERTIES:
+                        continue
                     old_index = backend_meta.indexOfProperty(property_name)
                     self.assertGreaterEqual(old_index, 0, property_name)
                     old = backend_meta.property(old_index)
@@ -53,7 +70,26 @@ class GuiBackendMetaObjectTests(TypedTestCase):
                 for index in range(meta.methodOffset(), meta.methodCount()):
                     method = meta.method(index)
                     signature = bytes(method.methodSignature()).decode()
+                    if name == "subtitles" and signature in SUBTITLE_CLIP_METHODS:
+                        continue
                     self.assertGreaterEqual(backend_meta.indexOfMethod(signature), 0, signature)
+
+    def test_subtitle_clip_filter_exposes_typed_facade_api(self) -> None:
+        meta = cast(QMetaObject, getattr(SubtitleFacade, "staticMetaObject"))
+        for name, (type_name, constant) in SUBTITLE_CLIP_PROPERTIES.items():
+            with self.subTest(property=name):
+                index = meta.indexOfProperty(name)
+                self.assertGreaterEqual(index, 0)
+                prop = meta.property(index)
+                self.assertEqual(prop.typeName(), type_name)
+                self.assertEqual(prop.isConstant(), constant)
+                if not constant:
+                    self.assertEqual(bytes(prop.notifySignal().methodSignature()).decode(), "subtitleClipFilterChanged()")
+        for signature, type_name in SUBTITLE_CLIP_METHODS.items():
+            with self.subTest(method=signature):
+                index = meta.indexOfMethod(signature)
+                self.assertGreaterEqual(index, 0)
+                self.assertEqual(meta.method(index).typeName(), type_name)
 
     def test_legacy_backend_alias_preserves_the_previous_import_surface(self) -> None:
         self.assertIs(LegacyEditBayBackendAlias, LegacyEditBayBackend)

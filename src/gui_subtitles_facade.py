@@ -52,6 +52,7 @@ class SubtitleFacade(FeatureFacade):
         self._segment_starts: list[float] = []
         self._segment_prefix_max_end: list[float] = []
         self._subtitle_clip_id = ""
+        self._subtitle_clip_project: dict[str, object] | None = None
         self._subtitle_clip_window: tuple[float, float] | None = None
         self._subtitle_clip_has_transcript = True
         self._subtitle_clip_model: SubtitleClipFilterModel | None = None
@@ -110,8 +111,9 @@ class SubtitleFacade(FeatureFacade):
         return self._subtitle_clip_model
 
     def _reset_subtitle_clip_filter(self) -> None:
-        """Never carry a source clip selection into a different project."""
-        self.setSubtitleClipFilter("")
+        """Clear on document replacement; edits and saves keep the same document."""
+        if self.project_editor.project is not self._subtitle_clip_project:
+            self.setSubtitleClipFilter("")
 
     def _refresh_subtitle_clip_filter(self) -> None:
         clip_id = self._subtitle_clip_id
@@ -201,6 +203,7 @@ class SubtitleFacade(FeatureFacade):
         ):
             return False
         self._subtitle_clip_id = clip_id
+        self._subtitle_clip_project = self.project_editor.project
         self._refresh_subtitle_clip_filter()
         return True
 

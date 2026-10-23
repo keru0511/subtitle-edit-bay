@@ -63,6 +63,16 @@ class SubtitleClipFilterModelTests(unittest.TestCase):
             "corrected",
         )
 
+    def test_time_edits_refilter_rows_when_start_or_end_crosses_clip_boundary(self) -> None:
+        self.proxy.set_clip_window(10.0, 16.0)
+        self.source.set_segments([
+            {"id": "first", "start": 0.0, "end": 12.0, "text": "now overlaps"},
+            {"id": "middle", "start": 16.0, "end": 18.0, "text": "now outside"},
+            {"id": "last", "start": 16.0, "end": 23.0, "text": "after"},
+        ])
+        self.assertEqual(self.proxy.rowCount(), 1)
+        self.assertEqual(self.proxy.mapToSource(self.proxy.index(0, 0)).row(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Sequence, cast
+from typing import IO, Callable, Sequence, cast
 
 from src.data_boundary import coerce_float, coerce_int, decode_json, is_object_list, is_object_mapping
 
@@ -241,8 +241,8 @@ def _collect_output_after_termination(
     try:
         return process.communicate(timeout=PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as cleanup_error:
-        stdout_stream = process.stdout
-        stderr_stream = process.stderr
+        stdout_stream = cast(IO[str] | IO[bytes] | None, process.stdout)
+        stderr_stream = cast(IO[str] | IO[bytes] | None, process.stderr)
         if stdout_stream is not None:
             stdout_stream.close()
         if stderr_stream is not None:

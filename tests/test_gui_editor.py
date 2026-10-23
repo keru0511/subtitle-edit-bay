@@ -385,6 +385,136 @@ Window {
         self.assertEqual(qt_property_value(window, "channelVolume"), 56)
         self.assertEqual(gains.count(), 1)
 
+    def _load_subtitle_clip_project(self) -> tuple[Path, str]:
+        path = self._load_project(segments=[
+            {"id": "before", "start": 0.0, "end": 4.0, "text": "範囲外・前", "speaker": "Speaker_Alice"},
+            {"id": "inside", "start": 10.0, "end": 14.0, "text": "範囲内", "speaker": "Speaker_Alice"},
+            {"id": "after", "start": 20.0, "end": 24.0, "text": "範囲外・後", "speaker": "Speaker_Alice"},
+        ])
+        clip_id = str(self.app.sequence.sequenceClips[0]["clipId"])
+        self.assertTrue(self.app.sequence.trimSequenceClip(clip_id, 10.0, 16.0))
+        self.assertTrue(self.app.saveProject())
+        return path, clip_id
+
+    def test_subtitle_clip_filter_survives_edits_history_and_saving(self) -> None:
+        """Windows GUI CI必須: 編集・Undo/Redo・保存では絞り込みを保ち、読み直しで解除する。"""
+        path, clip_id = self._load_subtitle_clip_project()
+        subtitles = self.app.subtitles
+        self.assertTrue(subtitles.setSubtitleClipFilter(clip_id))
+        self.assertFalse(self.app.projectDirty)
+        self.assertEqual(subtitles.filteredSegmentCount, 1)
+        self.assertEqual(subtitles.subtitleSourceIndexForRow(0), 1)
+        subtitles.updateSegment(1, {"text": "修正後"})
+        self.assertEqual(subtitles.subtitleClipFilterId, clip_id)
+        subtitles.undoSubtitleEdit()
+        self.assertEqual(subtitles.subtitleClipFilterId, clip_id)
+        self.assertEqual(subtitles.segmentAt(1)["text"], "範囲内")
+        subtitles.redoSubtitleEdit()
+        self.assertEqual(subtitles.subtitleClipFilterId, clip_id)
+        self.app._require_project_editor().mark_dirty()
+        self.assertEqual(subtitles.subtitleClipFilterId, clip_id)
+        self.assertTrue(self.app.saveProject())
+        self.assertEqual(subtitles.subtitleClipFilterId, clip_id)
+        self.assertEqual(subtitles.filteredSegmentCount, 1)
+        saved = load_project(path)
+        self.assertEqual(_value_at(saved, "segments", 1, "text"), "修正後")
+        self.assertEqual(len(_list_at(saved, "segments")), 3)
+        self.assertNotIn("subtitleClipFilterId", saved)
+        copy_path = self.root / "copy.subtitle-project.json"
+        self.assertTrue(self.app.saveProjectAs(str(copy_path)))
+        self.assertEqual(subtitles.subtitleClipFilterId, clip_id)
+        self.assertFalse(self.app._load_project_path(self.root / "missing.json", update_sources=False))
+        self.assertEqual(subtitles.subtitleClipFilterId, clip_id)
+        # 別ファイルでも同じclipIdを持つため、クリップの有無だけでは切替を判定できない。
+        self.assertTrue(self.app._load_project_path(copy_path, update_sources=False))
+        self.assertEqual(subtitles.subtitleClipFilterId, "")
+        self.assertEqual(subtitles.filteredSegmentCount, 3)
+        self.assertTrue(subtitles.setSubtitleClipFilter(clip_id))
+        self.assertTrue(self.app._clear_project())
+        self.assertEqual(subtitles.subtitleClipFilterId, "")
+        self.assertEqual(subtitles.filteredSegmentCount, 0)
+
+    def test_subtitle_clip_filter_tracks_trimming_and_removal(self) -> None:
+        """Windows GUI CI必須: クリップ範囲の変更とUndoに追随し、削除時には解除する。"""
+        _, clip_id = self._load_subtitle_clip_project()
+        asset_id = str(self.app.sequence.sequenceClips[0]["assetId"])
+        self.assertTrue(self.app.sequence.addSequenceClip(asset_id))
+        subtitles = self.app.subtitles
+        self.assertTrue(subtitles.setSubtitleClipFilter(clip_id))
+        self.assertTrue(self.app.sequence.trimSequenceClip(clip_id, 0.0, 24.0))
+        self.assertEqual(subtitles.subtitleClipFilterId, clip_id)
+        self.assertEqual(subtitles.filteredSegmentCount, 3)
+        subtitles.undoSubtitleEdit()
+        self.assertEqual(subtitles.subtitleClipFilterId, clip_id)
+        self.assertEqual(subtitles.filteredSegmentCount, 1)
+        self.assertTrue(self.app.sequence.removeSequenceClip(clip_id))
+        self.assertEqual(subtitles.subtitleClipFilterId, "")
+        self.assertFalse(subtitles.subtitleClipSourceWindow["active"])
+        self.assertFalse(subtitles.setSubtitleClipFilter(clip_id))
+
+    def test_subtitle_clip_filter_qml_maps_rows_and_excludes_other_assets(self) -> None:
+        """Windows GUI CI必須: クリップ選択で一覧・波形を絞り、元字幕行へ編集を適用する。"""
+        _, clip_id = self._load_subtitle_clip_project()
+        other_video = self.root / "other.mp4"
+        other_video.write_bytes(b"other video fixture")
+        asset_id = self._add_second_sequence_asset(other_video, duration=30.0)
+        self.assertTrue(self.app.sequence.addSequenceClip(asset_id))
+        other_clip_id = str(self.app.sequence.sequenceClips[-1]["clipId"])
+        self.app.selectEditMode("subtitle")
+        _, window = self._load_qml()
+        combo = self._quick_item(window, "workspaceSubtitleClipFilter")
+        subtitle_list = self._quick_item(window, "workspaceSubtitleList")
+        timeline = self._quick_item(window, "workspaceSubtitleTimeline")
+        self._click(window, combo)
+        QTest.keyClick(window, Qt.Key.Key_Down)
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.gui.wait_until(
+            lambda: self.app.subtitles.subtitleClipFilterId == clip_id
+            and _qt_number(subtitle_list, "count") == 1,
+            description="クリップ内の字幕一覧",
+        )
+        row = self.gui.find_visual_item_by_properties(subtitle_list, {"editorText": "範囲内"})
+        self._click(window, row)
+        self.assertEqual(self.app.subtitles.selectedSegmentIndex, 1)
+        self.assertEqual(self.app.subtitles.filteredSelectedSegmentIndex, 0)
+        for width, height in ((1220, 760), (1520, 940)):
+            with self.subTest(size=(width, height)):
+                self.gui.resize(window, width, height)
+                self.assertTrue(combo.isVisible())
+                self.assertGreater(combo.width(), 80)
+                self.gui.wait_until(
+                    lambda: [item["id"] for item in _dict_list_at(self._qml_value(timeline, "visibleSegments"))]
+                    == ["inside"],
+                    description="クリップ内の波形字幕",
+                )
+        self.app.subtitles.updateSegment(1, {"text": "選択行を修正"})
+        self.gui.wait_until(lambda: _qt_number(subtitle_list, "count") == 1, description="編集後の絞り込み")
+        self.assertEqual(self.app.subtitles.subtitleClipFilterId, clip_id)
+        self.assertEqual(self.app.subtitles.segmentAt(0)["text"], "範囲外・前")
+        # 非表示の字幕を削除しても、同じ表示行が指す元字幕行を更新する。
+        self.app.subtitles.selectSegment(0)
+        self.app.subtitles.deleteSelectedSegment()
+        self.gui.process_events()
+        row = self.gui.find_visual_item_by_properties(subtitle_list, {"editorText": "選択行を修正"})
+        self._click(window, row)
+        self.assertEqual(self.app.subtitles.selectedSegmentIndex, 0)
+        self.app.subtitles.undoSubtitleEdit()
+        self.gui.process_events()
+        row = self.gui.find_visual_item_by_properties(subtitle_list, {"editorText": "選択行を修正"})
+        self._click(window, row)
+        self.assertEqual(self.app.subtitles.selectedSegmentIndex, 1)
+        self.assertTrue(self.app.subtitles.setSubtitleClipFilter(other_clip_id))
+        self.gui.wait_until(
+            lambda: _qt_number(subtitle_list, "count") == 0
+            and self._qml_value(timeline, "visibleSegments") == [],
+            description="追加動画には主動画の字幕を表示しない",
+        )
+        self.assertFalse(self.app.subtitles.subtitleClipHasTranscript)
+        self.assertEqual(_qt_number(combo, "currentIndex"), 2)
+        self.assertTrue(self.app.subtitles.setSubtitleClipFilter(""))
+        self.gui.wait_until(lambda: _qt_number(subtitle_list, "count") == 3, description="全字幕へ戻る")
+        self.assertEqual(_qt_number(combo, "currentIndex"), 0)
+
     def test_workflow_and_ai_facades_publish_state_to_qml(self) -> None:
         self._load_project()
         window = self._load_feature_binding_probe()
@@ -12634,6 +12764,9 @@ Window {
         self.app.processEvents()
         restart_button = self._quick_item(window, "restartApplicationButton")
         self.assertTrue(_qt_bool(restart_button, "visible"))
+        # 表示直後のレイアウトと入力判定を確定してから実クリックする。
+        restart_button.ensurePolished()
+        self.gui.process_events()
         with patch("src.gui_updates_facade.subprocess.Popen") as popen, patch.object(self.app, "quit") as quit:
             self._click(window, restart_button)
             popen.assert_called_once()

@@ -18,6 +18,8 @@ from .subtitle_project import (
     MIN_SEGMENT_DURATION_SECONDS,
     normalize_segment,
 )
+from .gui_models import SubtitleClipFilterModel
+from .subtitle_clip_filter import is_primary_video_asset
 from .subtitle_line_count import segment_preview_text
 from .subtitle_workflow import build_project_ass
 
@@ -34,6 +36,7 @@ class SubtitleFacade(FeatureFacade):
     projectDataChanged = Signal()
     segmentsChanged = Signal()
     selectionChanged = Signal()
+    subtitleClipFilterChanged = Signal()
 
     def __init__(self, backend: "EditBayBackend") -> None:
         super().__init__(backend)
@@ -48,10 +51,19 @@ class SubtitleFacade(FeatureFacade):
         self._subtitle_preview_text_cache: dict[str, tuple[tuple[object, ...], str]] = {}
         self._segment_starts: list[float] = []
         self._segment_prefix_max_end: list[float] = []
+        self._subtitle_clip_id = ""
+        self._subtitle_clip_project: dict[str, object] | None = None
+        self._subtitle_clip_window: tuple[float, float] | None = None
+        self._subtitle_clip_has_transcript = True
+        self._subtitle_clip_model: SubtitleClipFilterModel | None = None
         backend.historyChanged.connect(self.historyChanged.emit)
         backend.projectDataChanged.connect(self.projectDataChanged.emit)
         backend.segmentsChanged.connect(self.segmentsChanged.emit)
         backend.selectionChanged.connect(self.selectionChanged.emit)
+        backend.selectionChanged.connect(self.subtitleClipFilterChanged.emit)
+        backend.segmentsChanged.connect(self.subtitleClipFilterChanged.emit)
+        backend.sequenceChanged.connect(self._refresh_subtitle_clip_filter)
+        backend.projectChanged.connect(self._reset_subtitle_clip_filter)
 
     def _segments(self) -> list[dict[str, object]]:
         project = self.project_editor.project
@@ -92,6 +104,108 @@ class SubtitleFacade(FeatureFacade):
     def subtitleModel(self) -> QObject:
         backend = self._backend
         return backend._subtitle_model
+
+    def _filtered_model(self) -> SubtitleClipFilterModel:
+        if self._subtitle_clip_model is None:
+            self._subtitle_clip_model = SubtitleClipFilterModel(self._backend._subtitle_model, self)
+        return self._subtitle_clip_model
+
+    def _reset_subtitle_clip_filter(self) -> None:
+        """Clear on document replacement; edits and saves keep the same document."""
+        if self.project_editor.project is not self._subtitle_clip_project:
+            self.setSubtitleClipFilter("")
+
+    def _refresh_subtitle_clip_filter(self) -> None:
+        clip_id = self._subtitle_clip_id
+        if not clip_id:
+            self._subtitle_clip_window = None
+            self._subtitle_clip_has_transcript = True
+            if self._subtitle_clip_model is not None:
+                self._subtitle_clip_model.set_clip_window(None, None)
+            self.subtitleClipFilterChanged.emit()
+            return
+
+        clip = next(
+            (row for row in self._backend.sequence.sequenceClips
+             if str(row.get("clipId", "")) == clip_id),
+            None,
+        )
+        if clip is None:
+            self._subtitle_clip_id = ""
+            self._refresh_subtitle_clip_filter()
+            return
+        project = self.project_editor.project
+        source_matches = is_primary_video_asset(project, str(clip.get("assetPath", "")))
+        self._subtitle_clip_window = (float(clip["sourceStart"]), float(clip["sourceEnd"]))
+        self._subtitle_clip_has_transcript = source_matches
+        self._filtered_model().set_clip_window(
+            *self._subtitle_clip_window,
+            has_transcript=source_matches,
+        )
+        self.subtitleClipFilterChanged.emit()
+
+    @Property(QObject, constant=True)
+    def filteredSubtitleModel(self) -> QObject:
+        return self._filtered_model()
+
+    @Property(str, notify=subtitleClipFilterChanged)
+    def subtitleClipFilterId(self) -> str:
+        return self._subtitle_clip_id
+
+    @Property(bool, notify=subtitleClipFilterChanged)
+    def subtitleClipHasTranscript(self) -> bool:
+        return self._subtitle_clip_has_transcript
+
+    @Property("QVariantMap", notify=subtitleClipFilterChanged)
+    def subtitleClipSourceWindow(self) -> dict[str, object]:
+        window = self._subtitle_clip_window
+        if window is None:
+            return {"active": False}
+        return {
+            "active": True,
+            "start": window[0],
+            "end": window[1],
+            "hasTranscript": self._subtitle_clip_has_transcript,
+        }
+
+    @Property(int, notify=subtitleClipFilterChanged)
+    def filteredSegmentCount(self) -> int:
+        return self._filtered_model().rowCount()
+
+    @Property(int, notify=subtitleClipFilterChanged)
+    def filteredSelectedSegmentIndex(self) -> int:
+        source_row = self.project_editor.selected_segment_index
+        if not self._subtitle_clip_id:
+            return source_row
+        if source_row < 0:
+            return -1
+        index = self._filtered_model().mapFromSource(
+            self._backend._subtitle_model.index(source_row, 0)
+        )
+        return index.row() if index.isValid() else -1
+
+    @Slot(int, result=int)
+    def subtitleSourceIndexForRow(self, row: int) -> int:
+        if row < 0:
+            return -1
+        if not self._subtitle_clip_id:
+            return row if row < len(self._segments()) else -1
+        source_index = self._filtered_model().mapToSource(
+            self._filtered_model().index(row, 0)
+        )
+        return source_index.row() if source_index.isValid() else -1
+
+    @Slot(str, result=bool)
+    def setSubtitleClipFilter(self, clip_id: str) -> bool:
+        clip_id = str(clip_id or "")
+        if clip_id and not any(
+            str(row.get("clipId", "")) == clip_id for row in self._backend.sequence.sequenceClips
+        ):
+            return False
+        self._subtitle_clip_id = clip_id
+        self._subtitle_clip_project = self.project_editor.project
+        self._refresh_subtitle_clip_filter()
+        return True
 
     @Property("QVariantList", constant=True)
     def fontChoices(self) -> list[dict[str, str]]:

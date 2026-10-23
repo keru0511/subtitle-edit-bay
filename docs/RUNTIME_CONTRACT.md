@@ -1,7 +1,7 @@
 # Windows runtime contract
 
 Windows の配布版は `runtime/runtime-contract.json` を契約の起点とし、CPU と NVIDIA CUDA 12.8 の
-2 プロファイルを提供します。Python は CPython 3.10、FFmpeg/ffprobe は major 6 以上 10 未満です。
+2 プロファイルを提供します。Codex接続用の公式Python SDKと同じ版のCodex本体も、両プロファイルに固定して含めます。Python は CPython 3.10、FFmpeg/ffprobe は major 6 以上 10 未満です。
 `setup.bat` と修復ショートカットは同じ契約を使います。
 
 ## 再現と修復
@@ -20,7 +20,7 @@ GPU、FFmpeg/ffprobe、使用した lock と SHA-256 を記録します。GUI �
 ## lock の更新
 
 直接依存を `runtime/requirements-windows.in` で更新し、同じ uv バージョンを使って Windows x64 / Python 3.10
-向け lock を生成します（現在の生成器は `uv 0.11.33` です）。
+向け lock を生成します（現在の生成器は `uv 0.12.23` です）。
 
 ```powershell
 uv pip compile runtime/requirements-windows.in --python-version 3.10 --python-platform x86_64-pc-windows-msvc --generate-hashes --no-emit-index-url --output-file runtime/requirements-windows-cpu.lock

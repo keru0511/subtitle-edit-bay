@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -70,6 +72,42 @@ class ApplicationLoggingTests(TypedTestCase):
         for secret in ("Zm9vOmJhcg==", "two words", "url-secret"):
             self.assertNotIn(secret, redacted)
         self.assertIn("next=ok", redacted)
+
+    def test_path_redaction_handles_many_separators_without_hanging(self) -> None:
+        program = """
+from src.application_logging import redact_text
+from src.codex_runtime import redact_codex_diagnostic
+
+for value in ("/" + "!/" * 20_000, "/" + "!/" * 20_000 + "file.json"):
+    assert redact_text(value, paths=True) == "<local-path>"
+    assert redact_codex_diagnostic(value) == "<local-path>"
+"""
+        completed = subprocess.run(
+            [sys.executable, "-c", program],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_path_redaction_preserves_trailing_diagnostic_text(self) -> None:
+        for path in ("/tmp/codex.json", "/home/Alice/My Projects/cache.dir/codex.json"):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    redact_text(f"Failed to read {path}: SDK v1.2.3", paths=True),
+                    "Failed to read <local-path>: SDK v1.2.3",
+                )
+
+    def test_path_redaction_masks_unix_paths_with_punctuation(self) -> None:
+        for separator in "<>|?*":
+            with self.subTest(separator=separator):
+                self.assertEqual(
+                    redact_text(f"Failed to read /home/Alice{separator}private/cache", paths=True),
+                    "Failed to read <local-path>",
+                )
 
     def test_structured_file_and_bounded_memory_are_written(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

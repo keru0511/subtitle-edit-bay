@@ -3,17 +3,16 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Mapping, Protocol, Sequence, TypedDict
+from typing import Mapping, Sequence, TypedDict
 
-from .data_boundary import coerce_float, decode_json, is_object_list, is_object_mapping
+from openai_codex.client import CodexClient
+from openai_codex.errors import TransportClosedError
 
+from .codex_runtime import redact_codex_diagnostic
+from .codex_sdk import run_structured_turn, sdk_deadline
+from .data_boundary import coerce_float, is_object_list, is_object_mapping
 
 SEMANTIC_CATEGORIES = {"conversation", "emphasis", "reaction", "gameplay", "other"}
-
-
-class HighlightRankerClient(Protocol):
-    def thread_start(self, params: Mapping[str, object] | None = None) -> Mapping[str, object]: ...
-    def turn_start(self, **kwargs: object) -> Mapping[str, object]: ...
 
 
 class HighlightRankingError(ValueError):
@@ -86,10 +85,15 @@ def build_ranker_context(
 def rank_highlight_candidates(
     candidates: Sequence[Mapping[str, object]],
     *,
-    client: HighlightRankerClient | None = None,
+    client: CodexClient | None = None,
     settings: HighlightRankerSettings | None = None,
     revision: int | None = None,
 ) -> HighlightRankingResult:
+    """Borrow the caller's client, closing it only on timeout/transport failure.
+
+    Output validation, ranking settings and RPC errors fall back to local
+    rankings while leaving the caller's connection available for reuse.
+    """
     settings = settings or HighlightRankerSettings()
     local = [dict(item) for item in candidates]
     context = build_ranker_context(local, settings)
@@ -97,34 +101,25 @@ def rank_highlight_candidates(
     if client is None:
         return HighlightRankingResult(tuple(local), True, "Codex client is unavailable", cache_key)
     try:
-        thread = client.thread_start(
-            {
-                "approvalPolicy": "never",
-                "sandbox": "read-only",
-            }
-        )
-        thread_id = str(thread.get("threadId", thread.get("id", "")))
-        if not thread_id:
-            raise HighlightRankingError("Codex thread id is missing")
-        response = client.turn_start(
-            thread_id=thread_id,
+        with sdk_deadline(client):
+            thread = client.thread_start({"approvalPolicy": "never", "sandbox": "read-only"})
+        raw = run_structured_turn(
+            client,
+            thread_id=thread.thread.id,
             prompt="候補の意味的な見どころ度を評価し、候補IDごとに返してください",
             output_schema=RANKING_OUTPUT_SCHEMA,
             context=context,
-            approval_policy="never",
-            sandbox_policy={
-                "type": "readOnly",
-                "networkAccess": False,
-            },
         )
-        raw = response.get("output", response.get("ranking", response))
-        if isinstance(raw, str):
-            raw = decode_json(raw)
         semantic = _validate_ranking(raw, local)
         ranked = _combine_and_sort(local, semantic, settings)
         return HighlightRankingResult(tuple(ranked), False, "", cache_key)
     except Exception as error:
-        return HighlightRankingResult(tuple(local), True, str(error), cache_key)
+        if isinstance(error, (OSError, TransportClosedError)):
+            try:
+                client.close()
+            except Exception:
+                pass
+        return HighlightRankingResult(tuple(local), True, redact_codex_diagnostic(error), cache_key)
 
 
 def build_ranker_cache_key(

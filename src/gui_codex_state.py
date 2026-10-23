@@ -1,20 +1,26 @@
 from __future__ import annotations
 
-from contextlib import nullcontext
-import inspect
 import threading
-from dataclasses import dataclass
-from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Mapping, Protocol, cast
+from contextlib import closing, nullcontext
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Callable, Mapping, cast
+
+from openai_codex.client import CodexClient
+from openai_codex.generated.v2_all import (
+    AgentMessageDeltaNotification,
+    TurnCompletedNotification,
+    TurnStartedNotification,
+)
+from openai_codex.models import JsonObject, Notification
 
 from .codex_isolation import (
     CodexIsolationError,
-    McpStatusClient,
     build_isolated_thread_params,
-    build_isolated_turn_kwargs,
     collect_mcp_server_names,
     isolated_codex_cwd,
 )
+from .codex_runtime import redact_codex_diagnostic
+from .codex_sdk import create_codex_client, run_structured_turn, sdk_deadline
 from .data_boundary import coerce_float, decode_json, is_object_list, is_object_mapping
 
 if TYPE_CHECKING:
@@ -46,60 +52,10 @@ _CONTEXT_FIELDS = (
 )
 
 
-class CodexClientProtocol(Protocol):
-    """字幕提案の通常turnに必要なapp-server操作。"""
-
-    def start(self) -> Mapping[str, object]: ...
-    def stop(self) -> None: ...
-    def account_read(self) -> Mapping[str, object]: ...
-    def thread_start(self, params: Mapping[str, object] | None = None) -> Mapping[str, object]: ...
-    def turn_start(
-        self,
-        *,
-        thread_id: str,
-        prompt: str,
-        output_schema: Mapping[str, object] | None = None,
-        context: Mapping[str, object] | None = None,
-        approval_policy: str | None = None,
-        sandbox_policy: Mapping[str, object] | None = None,
-    ) -> Mapping[str, object]: ...
-
-    def turn_interrupt(self, turn_id: str, *, thread_id: str) -> Mapping[str, object]: ...
-
-
-class _NoArgClientFactory(Protocol):
-    def __call__(self) -> CodexClientProtocol: ...
-
-
-class _CwdClientFactory(Protocol):
-    def __call__(self, *, cwd: str) -> CodexClientProtocol: ...
-
-
-ClientFactory = _NoArgClientFactory | _CwdClientFactory
-
-
-class _StructuredTurnRunner(Protocol):
-    def __call__(
-        self,
-        *,
-        thread_id: str,
-        prompt: str,
-        output_schema: Mapping[str, object],
-        context: Mapping[str, object],
-        cwd: str,
-        environments: list[Mapping[str, object]],
-        approval_policy: str,
-        runtime_workspace_roots: list[str | Path],
-        sandbox_policy: Mapping[str, object],
-        timeout: float,
-    ) -> Mapping[str, object]: ...
+ClientFactory = Callable[[str | None], CodexClient]
 
 
 class CodexSessionError(RuntimeError):
-    pass
-
-
-class _CodexSessionCancelled(Exception):
     pass
 
 
@@ -186,7 +142,7 @@ class CodexSessionController:
         self._callback_dispatcher = callback_dispatcher or (lambda callback: callback())
         self.isolated_turn = bool(isolated_turn)
         self._snapshot = CodexSessionSnapshot()
-        self._client: CodexClientProtocol | None = None
+        self._client: CodexClient | None = None
         self._thread: threading.Thread | None = None
         self._state_lock = threading.RLock()
         self._generation = 0
@@ -239,20 +195,28 @@ class CodexSessionController:
         self._thread.start()
 
     def stop(self) -> None:
+        self._stop(interrupt=True)
+
+    def shutdown(self) -> None:
+        """Close the SDK on app exit without waiting for an interrupt RPC."""
+        self._stop(interrupt=False)
+
+    def _stop(self, *, interrupt: bool) -> None:
         with self._state_lock:
             stop_event = self._stop_event
+            stop_event.set()
             generation = self._generation
             client = self._client
             snapshot = self._snapshot
-        stop_event.set()
-        if client is not None and snapshot.turn_id:
+        if interrupt and client is not None and snapshot.turn_id:
             try:
-                client.turn_interrupt(snapshot.turn_id, thread_id=snapshot.thread_id)
+                with sdk_deadline(client):
+                    client.turn_interrupt(snapshot.thread_id, snapshot.turn_id)
             except Exception:
                 pass
         if client is not None:
             try:
-                client.stop()
+                client.close()
             except Exception:
                 pass
         if snapshot.state in {"starting", "authenticating", "running"}:
@@ -294,17 +258,18 @@ class CodexSessionController:
         generation: int,
         stop_event: threading.Event,
     ) -> None:
-        client: CodexClientProtocol | None = None
+        client: CodexClient | None = None
         try:
             workspace_context = isolated_codex_cwd() if self.isolated_turn else nullcontext(None)
-            with workspace_context as isolated_cwd:
-                client = self._create_client(isolated_cwd)
-                with self._state_lock:
-                    if not self._is_active(generation, stop_event):
-                        return
-                    self._client = client
-                self._attach_notification_callback(client, generation, stop_event)
-                client.start()
+            # Windows keeps a live child's cwd locked: close the SDK first.
+            with workspace_context as isolated_cwd, closing(self._create_client(isolated_cwd)) as client:
+                with sdk_deadline(client):
+                    with self._state_lock:
+                        if not self._is_active(generation, stop_event):
+                            return
+                        self._client = client
+                        client.start()
+                    client.initialize()
                 if not self._is_active(generation, stop_event):
                     return
                 self._publish(
@@ -312,10 +277,11 @@ class CodexSessionController:
                     generation=generation,
                     stop_event=stop_event,
                 )
-                account = client.account_read()
+                with sdk_deadline(client):
+                    account = client.account_read()
                 if not self._is_active(generation, stop_event):
                     return
-                if not bool(account.get("authenticated", account.get("loggedIn", False))):
+                if account.account is None and account.requires_openai_auth:
                     self._publish(
                         CodexSessionSnapshot(
                             state="unauthenticated",
@@ -326,7 +292,7 @@ class CodexSessionController:
                         stop_event=stop_event,
                     )
                     return
-                thread_params: Mapping[str, object] = {
+                thread_params: JsonObject = {
                     "approvalPolicy": "never",
                     "sandbox": "read-only",
                 }
@@ -334,9 +300,8 @@ class CodexSessionController:
                     try:
                         if isolated_cwd is None:
                             raise CodexIsolationError("Codex turn working directory is unavailable")
-                        mcp_client = self._mcp_status_client(client)
                         configured_mcp_names = collect_mcp_server_names(
-                            mcp_client,
+                            client,
                             config_only=True,
                         )
                         thread_params = build_isolated_thread_params(
@@ -345,19 +310,15 @@ class CodexSessionController:
                         )
                     except (AttributeError, CodexIsolationError) as error:
                         raise CodexSessionError("Codexの隔離設定を確認できません") from error
-                thread = client.thread_start(thread_params)
+                with sdk_deadline(client):
+                    thread = client.thread_start(thread_params)
                 if not self._is_active(generation, stop_event):
                     return
-                thread_payload = thread.get("thread", thread)
-                thread_id = (str(thread_payload.get("id", "")) if isinstance(thread_payload, Mapping) else "") or str(
-                    thread.get("threadId", "")
-                )
-                if not thread_id:
-                    raise CodexSessionError("Codex thread id was not returned")
+                thread_id = thread.thread.id
                 if self.isolated_turn:
                     try:
                         exposed_mcp_names = collect_mcp_server_names(
-                            self._mcp_status_client(client),
+                            client,
                             thread_id=thread_id,
                         )
                     except (AttributeError, CodexIsolationError) as error:
@@ -369,13 +330,14 @@ class CodexSessionController:
                     generation=generation,
                     stop_event=stop_event,
                 )
-                response = self._run_turn(
+                response = run_structured_turn(
                     client,
                     thread_id=thread_id,
                     prompt=prompt,
                     context=context,
                     output_schema=output_schema,
-                    isolated_cwd=isolated_cwd,
+                    cwd=isolated_cwd,
+                    on_event=lambda event: self._on_notification(generation, stop_event, event),
                 )
                 if not self._is_active(generation, stop_event):
                     return
@@ -405,8 +367,6 @@ class CodexSessionController:
                         generation,
                         stop_event,
                     )
-        except _CodexSessionCancelled:
-            return
         except Exception as error:
             if self._is_current_generation(generation) and not stop_event.is_set():
                 self._publish(
@@ -415,138 +375,41 @@ class CodexSessionController:
                         thread_id=self._snapshot.thread_id,
                         turn_id=self._snapshot.turn_id,
                         revision=revision,
-                        error=str(error),
+                        error=redact_codex_diagnostic(error),
                     ),
                     generation=generation,
                     stop_event=stop_event,
                 )
         finally:
-            if client is not None:
-                try:
-                    client.stop()
-                except Exception:
-                    pass
-                with self._state_lock:
-                    if self._client is client:
-                        self._client = None
+            with self._state_lock:
+                if self._client is client:
+                    self._client = None
 
-    def _create_client(self, cwd: str | None) -> CodexClientProtocol:
-        factory = self.client_factory
-        if cwd is None:
-            return cast(_NoArgClientFactory, factory)()
-        try:
-            parameters: tuple[inspect.Parameter, ...] = tuple(inspect.signature(factory).parameters.values())
-        except (TypeError, ValueError):
-            parameters = ()
-        accepts_cwd = any(
-            parameter.name == "cwd" or parameter.kind is parameter.VAR_KEYWORD for parameter in parameters
-        )
-        if accepts_cwd:
-            return cast(_CwdClientFactory, factory)(cwd=cwd)
-        return cast(_NoArgClientFactory, factory)()
-
-    @staticmethod
-    def _mcp_status_client(client: CodexClientProtocol) -> McpStatusClient:
-        if not hasattr(client, "mcp_server_status_list"):
-            raise CodexIsolationError("Codex MCP inventory is unavailable")
-        return cast(McpStatusClient, client)
-
-    def _run_turn(
-        self,
-        client: CodexClientProtocol,
-        *,
-        thread_id: str,
-        prompt: str,
-        context: Mapping[str, object],
-        output_schema: Mapping[str, object],
-        isolated_cwd: str | None,
-    ) -> Mapping[str, object]:
-        if self.isolated_turn:
-            runner_value = cast(object, getattr(client, "run_structured_turn", None))
-            if not callable(runner_value) or isolated_cwd is None:
-                raise CodexSessionError("Codexの構造化turn経路を利用できません")
-            runner = cast(_StructuredTurnRunner, runner_value)
-            return runner(
-                thread_id=thread_id,
-                prompt=prompt,
-                output_schema=output_schema,
-                context=context,
-                **build_isolated_turn_kwargs(isolated_cwd),
-                timeout=120.0,
-            )
-        return client.turn_start(
-            thread_id=thread_id,
-            prompt=prompt,
-            output_schema=output_schema,
-            context=context,
-            approval_policy="never",
-            sandbox_policy={
-                "type": "readOnly",
-                "networkAccess": False,
-            },
-        )
-
-    def _attach_notification_callback(
-        self,
-        client: CodexClientProtocol,
-        generation: int,
-        stop_event: threading.Event,
-    ) -> None:
-        if hasattr(client, "notification_callback"):
-            callback: Callable[[object], None] = lambda notification: self._on_notification(
-                generation, stop_event, notification
-            )
-            setattr(
-                client,
-                "notification_callback",
-                callback,
-            )
+    def _create_client(self, cwd: str | None) -> CodexClient:
+        return self.client_factory(cwd)
 
     def _on_notification(
         self,
         generation: int,
         stop_event: threading.Event,
-        notification: object,
+        notification: Notification,
     ) -> None:
         if not self._is_active(generation, stop_event):
             return
-        method = str(cast(object, getattr(notification, "method", "")))
-        params_value = cast(object, getattr(notification, "params", None))
-        params: Mapping[object, object] = params_value if is_object_mapping(params_value) else {}
-        notification_turn_id = str(params.get("turnId", ""))
-        turn_payload = params.get("turn")
-        if not notification_turn_id and is_object_mapping(turn_payload):
-            notification_turn_id = str(turn_payload.get("id", ""))
-        if "turn" in method.casefold() and notification_turn_id:
+        payload = notification.payload
+        if isinstance(payload, (TurnStartedNotification, TurnCompletedNotification)):
             self._publish(
-                CodexSessionSnapshot(
-                    state=self._snapshot.state,
-                    thread_id=self._snapshot.thread_id,
-                    turn_id=notification_turn_id,
-                    revision=self._snapshot.revision,
-                    message=self._snapshot.message,
-                    proposal=self._snapshot.proposal,
-                ),
+                replace(self._snapshot, turn_id=payload.turn.id), generation=generation, stop_event=stop_event
+            )
+        if isinstance(payload, AgentMessageDeltaNotification):
+            self._publish(
+                replace(self._snapshot, turn_id=payload.turn_id, message=self._snapshot.message + payload.delta),
                 generation=generation,
                 stop_event=stop_event,
             )
-        delta = params.get("delta", params.get("text", ""))
-        if delta:
-            message = self._snapshot.message + str(delta)
-            self._publish(
-                CodexSessionSnapshot(
-                    state=self._snapshot.state,
-                    thread_id=self._snapshot.thread_id,
-                    turn_id=self._snapshot.turn_id,
-                    revision=self._snapshot.revision,
-                    message=message,
-                    proposal=self._snapshot.proposal,
-                ),
-                generation=generation,
-            )
             on_message = self.on_message
             if on_message is not None:
-                self._dispatch(lambda: on_message(str(delta)), generation, stop_event)
+                self._dispatch(lambda: on_message(payload.delta), generation, stop_event)
 
     def _publish(
         self,
@@ -555,10 +418,13 @@ class CodexSessionController:
         generation: int | None = None,
         stop_event: threading.Event | None = None,
     ) -> None:
-        if generation is not None and not self._is_current_generation(generation):
-            return
-        self._snapshot = snapshot
-        on_state = self.on_state
+        with self._state_lock:
+            if generation is not None and generation != self._generation:
+                return
+            if stop_event is not None and stop_event.is_set():
+                return
+            self._snapshot = snapshot
+            on_state = self.on_state
         if on_state is not None:
             self._dispatch(lambda: on_state(snapshot), generation, stop_event)
 
@@ -585,10 +451,8 @@ class CodexSessionController:
         return self._is_current_generation(generation) and not stop_event.is_set()
 
     @staticmethod
-    def _default_client_factory(cwd: str | None = None) -> CodexClientProtocol:
-        from .codex_app_server_client import CodexAppServerClient
-
-        return CodexAppServerClient(cwd=cwd)
+    def _default_client_factory(cwd: str | None = None) -> CodexClient:
+        return create_codex_client(cwd=cwd)
 
     @staticmethod
     def _default_proposal_parser(payload: Mapping[str, object]) -> object:

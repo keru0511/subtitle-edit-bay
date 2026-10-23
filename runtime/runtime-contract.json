@@ -19,6 +19,8 @@
     "janome",
     "numpy",
     "PySide6.QtCore",
+    "openai_codex",
+    "codex_cli_bin",
     "whisperx",
     "whisperx.asr",
     "whisperx.alignment",

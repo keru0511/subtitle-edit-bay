@@ -688,6 +688,8 @@ class EditBayBackend(LegacyBackendCompatibility, LegacyEditBayBackend):
                 actions=self._codex_actions,
             )
         )
+        self.aboutToQuit.connect(self._codex_session.shutdown)
+        self.aboutToQuit.connect(self._codex_audio_mix_session.shutdown)
         self.aboutToQuit.connect(self._ai_chat.shutdown)
         self._ai_chat.connect()
         self.updateDownloadProgressEvent.connect(self._on_update_download_progress, Qt.ConnectionType.QueuedConnection)

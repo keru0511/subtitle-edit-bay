@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Mapping, Sequence
 
+from openai_codex.client import CodexClient
 from PySide6.QtCore import QProcess
 from PySide6.QtMultimedia import QAudioBuffer
 
@@ -12,7 +13,6 @@ from .qt_decorators import Slot
 from .qt_audio_buffer_output import QAudioBufferOutput
 from .audio_preview_cache import AudioPreviewCacheResult
 from .codex_actions import ActionResult, ActionScope
-from .codex_app_server_client import CodexAppServerClient
 from .editor_workspace import EditModeCapabilities, TimeMapping
 from .gemini_acp_provider import GeminiAcpProvider
 from .gui_codex_chat_state import CodexChatSnapshot
@@ -711,7 +711,7 @@ class LegacyBackendCompatibility:
     def _queue_codex_system_log(self, message: object, *, severity: str = "INFO") -> None:
         return self._ai_facade._queue_codex_system_log(message, severity=severity)
 
-    def _create_codex_chat_client(self, cwd: str | Path | None = None) -> CodexAppServerClient:
+    def _create_codex_chat_client(self, cwd: str | Path | None = None) -> CodexClient:
         return self._ai_facade._create_codex_chat_client(cwd)
 
     def _create_gemini_chat_provider(self) -> GeminiAcpProvider:

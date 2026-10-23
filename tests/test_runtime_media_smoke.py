@@ -276,21 +276,26 @@ class RuntimeMediaSmokeTests(TypedTestCase):
 
             app = QApplication.instance() or EditBayBackend(["subtitle-edit-bay-mixer-smoke"], workspace_root=root)
             backend = app if isinstance(app, EditBayBackend) else EditBayBackend(["subtitle-edit-bay-mixer-smoke"], workspace_root=root)
-            backend.loadProject(str(project_path))
+            try:
+                backend.loadProject(str(project_path))
 
-            channels = backend.audioMixerChannels
-            self.assertGreaterEqual(len(channels), 2)
-            external_index = next(index for index, channel in enumerate(channels) if channel.get("kind") == "external")
-            backend.updateAudioMixChannel(external_index, {"enabled": True, "volume_percent": 125.0, "solo": True})
+                channels = backend.audioMixerChannels
+                self.assertGreaterEqual(len(channels), 2)
+                external_index = next(index for index, channel in enumerate(channels) if channel.get("kind") == "external")
+                backend.updateAudioMixChannel(external_index, {"enabled": True, "volume_percent": 125.0, "solo": True})
 
-            updated = backend.audioMixerChannels[external_index]
-            backend._audio_preview_cache_paths[str(updated["id"])] = str(speaker_audio)
-            self.assertTrue(updated["enabled"])
-            self.assertTrue(updated["solo"])
-            self.assertEqual(updated["volume_percent"], 125.0)
-            self.assertEqual(backend.audioMixerPreviewGains.get(str(updated["id"])), 1.25)
-            backend.stopAudioMixerPreview()
-            backend.quit()
+                updated = backend.audioMixerChannels[external_index]
+                backend._audio_preview_cache_paths[str(updated["id"])] = str(speaker_audio)
+                self.assertTrue(updated["enabled"])
+                self.assertTrue(updated["solo"])
+                self.assertEqual(updated["volume_percent"], 125.0)
+                self.assertEqual(backend.audioMixerPreviewGains.get(str(updated["id"])), 1.25)
+            finally:
+                # This test never enters app.exec(), so quit() cannot emit aboutToQuit.
+                backend._ai_chat.shutdown()
+                backend.stopAudioMixerPreview()
+                backend._shutdown_executor()
+                backend.quit()
 
 
 if __name__ == "__main__":

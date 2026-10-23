@@ -52,7 +52,6 @@ from src.audio_preview_cache import (
 )
 from src import updater
 from src.codex_actions import ActionResult, ActionScope, ActionStatus
-from src.codex_runtime import CodexRuntimeInfo
 from src.gui import EditBayBackend, build_font_choices
 from src.gui_codex_chat_state import CodexChatSnapshot
 from src.gui_codex_state import CodexSessionSnapshot
@@ -263,6 +262,48 @@ class GuiEditorRegressionTests(TypedTestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         cls._session.cleanup()
+
+    def test_app_exit_closes_codex_proposal_clients(self) -> None:
+        """Windows GUI CI必須: アプリ終了で割り込み要求を待たず字幕・音量提案のSDK接続を閉じる。"""
+        script = """
+import sys
+from pathlib import Path
+from unittest.mock import patch
+from PySide6.QtCore import QTimer
+from src.gui import EditBayBackend
+from src.gui_codex_state import CodexSessionSnapshot
+from tests.codex_fixtures import FakeSDKClient
+
+with patch("src.gui.CodexChatController.connect"):
+    app = EditBayBackend(["codex-exit-test"], workspace_root=Path(sys.argv[1]))
+sessions = (app._codex_session, app._codex_audio_mix_session)
+clients = []
+for session in sessions:
+    client = FakeSDKClient()
+    client.start()
+    session._client = client
+    session._snapshot = CodexSessionSnapshot(state="running", thread_id="thread-1", turn_id="turn-1")
+    clients.append(client)
+QTimer.singleShot(0, app.quit)
+try:
+    assert app.exec() == 0
+    assert all(not client.started for client in clients), "proposal SDK clients survived app exit"
+    assert all(client.interrupted is None for client in clients), "app exit sent a blocking interrupt request"
+    assert all(session.snapshot.state == "stopped" for session in sessions)
+finally:
+    for session in sessions:
+        session.stop()
+"""
+        completed = subprocess.run(
+            [sys.executable, "-c", script, str(self.root)],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def setUp(self) -> None:
         self.addCleanup(self._session.finish_test)
@@ -4188,18 +4229,10 @@ Window {
             self.app.refreshDependencies()
         self.assertIn("[runtime] 依存関係:", self.app.logText)
 
-        runtime = CodexRuntimeInfo(
-            available=True,
-            executable="codex",
-            version="codex-cli 0.99.0",
-            distribution="git",
-        )
-        with patch("src.gui_ai_facade.detect_codex", return_value=runtime):
-            client = self.app._create_codex_chat_client()
-        self.assertIsNotNone(client.log_callback)
+        self.app._create_codex_chat_client()
         log_thread = threading.Thread(
-            target=client.log_callback,
-            args=(f"request initialize token={secret}",),
+            target=self.app._queue_codex_system_log,
+            args=(f"SDK初期化 token={secret}",),
         )
         log_thread.start()
         log_thread.join(timeout=1)
@@ -4216,8 +4249,8 @@ Window {
                 error=f"Codexへ接続できません token={secret}",
             )
         )
-        self.assertIn("Codex CLI検出成功", self.app.logText)
-        self.assertIn("request initialize", self.app.logText)
+        self.assertIn("Codex SDK初期化", self.app.logText)
+        self.assertIn("SDK初期化", self.app.logText)
         self.assertIn("Codex状態: connection=error", self.app.logText)
         self.assertNotIn(secret, self.app.logText)
         self.assertNotIn("private-login", self.app.logText)

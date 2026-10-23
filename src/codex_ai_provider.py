@@ -3,9 +3,23 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Mapping
-from pathlib import Path
-from typing import Protocol
+from collections.abc import Callable
+
+from openai_codex.client import CodexClient
+from openai_codex.generated.v2_all import (
+    AccountLoginCompletedNotification,
+    AccountUpdatedNotification,
+    AgentMessageDeltaNotification,
+    AgentMessageThreadItem,
+    ChatgptAccount,
+    ChatgptLoginAccountResponse,
+    ErrorNotification,
+    ItemCompletedNotification,
+    ModelListResponse,
+    TurnCompletedNotification,
+    TurnStartedNotification,
+)
+from openai_codex.models import JsonObject, Notification
 
 from .ai_provider import (
     AIModel,
@@ -16,57 +30,11 @@ from .ai_provider import (
     AIProviderSession,
     AIProviderState,
 )
-from .codex_app_server_client import CodexNotification
 from .codex_runtime import redact_codex_diagnostic
-from .data_boundary import is_object_list, is_string_object_mapping
+from .codex_sdk import sdk_deadline
 
 
-class CodexAppServerClientProtocol(Protocol):
-    notification_callback: Callable[[CodexNotification], None] | None
-    disconnect_callback: Callable[[Exception], None] | None
-
-    def start(self) -> Mapping[str, object]: ...
-
-    def stop(self) -> None: ...
-
-    def account_read(self, *, refresh_token: bool = False) -> Mapping[str, object]: ...
-
-    def account_login_start(
-        self,
-        *,
-        login_type: str = "chatgpt",
-        use_hosted_login_success_page: bool = True,
-        app_brand: str = "chatgpt",
-    ) -> Mapping[str, object]: ...
-
-    def account_logout(self) -> Mapping[str, object]: ...
-
-    def model_list(self, *, limit: int = 100, include_hidden: bool = False) -> Mapping[str, object]: ...
-
-    def thread_start(self, params: Mapping[str, object] | None = None) -> Mapping[str, object]: ...
-
-    def thread_resume(
-        self,
-        thread_id: str,
-        *,
-        model: str | None = None,
-        cwd: str | Path | None = None,
-        approval_policy: str | None = None,
-        sandbox: str | None = None,
-    ) -> Mapping[str, object]: ...
-
-    def turn_start(
-        self,
-        *,
-        thread_id: str,
-        prompt: str,
-        model: str | None = None,
-        cwd: str | Path | None = None,
-        approval_policy: str | None = None,
-        sandbox_policy: Mapping[str, object] | None = None,
-    ) -> Mapping[str, object]: ...
-
-    def turn_interrupt(self, turn_id: str, *, thread_id: str) -> Mapping[str, object]: ...
+MAX_MODEL_LIST_PAGES = 100
 
 
 class CodexAIProvider:
@@ -78,13 +46,14 @@ class CodexAIProvider:
     def __init__(
         self,
         *,
-        client_factory: Callable[[], CodexAppServerClientProtocol],
+        client_factory: Callable[[], CodexClient],
         preferred_model: str = "",
     ) -> None:
         self.client_factory = client_factory
         self._preferred_model = str(preferred_model).strip()
         self._state = AIProviderState(selected_model=self._preferred_model)
-        self._client: CodexAppServerClientProtocol | None = None
+        self._client: CodexClient | None = None
+        self._closed = False
         self._listeners: list[AIProviderListener] = []
         self._lock = threading.RLock()
 
@@ -104,9 +73,11 @@ class CodexAIProvider:
                 self._listeners.remove(listener)
 
     def connect(self, *, force: bool = False) -> AIProviderState:
-        old_client: CodexAppServerClientProtocol | None = None
+        old_client: CodexClient | None = None
         try:
             with self._lock:
+                if self._closed:
+                    return self._state
                 if not force and self._client is not None:
                     return self._state
                 if force:
@@ -114,21 +85,29 @@ class CodexAIProvider:
                     self._client = None
                 self._set_state(availability="connecting", auth_state="checking", error="")
             if old_client is not None:
-                old_client.stop()
+                old_client.close()
             client = self.client_factory()
-            client.notification_callback = self._on_notification
-            client.disconnect_callback = self._on_disconnect
-            with self._lock:
-                self._client = client
-            client.start()
+            with sdk_deadline(client):
+                with self._lock:
+                    if self._closed:
+                        client.close()
+                        return self._state
+                    self._client = client
+                    client.start()
+                client.initialize()
+            threading.Thread(
+                target=self._consume_global, args=(client,), name="codex-account-events", daemon=True
+            ).start()
             return self.refresh()
         except Exception as error:
             with self._lock:
+                if self._closed:
+                    return self._state
                 failed_client = self._client
                 self._client = None
             if failed_client is not None:
                 try:
-                    failed_client.stop()
+                    failed_client.close()
                 except Exception:
                     pass
             return self._set_state(
@@ -140,8 +119,18 @@ class CodexAIProvider:
 
     def refresh(self) -> AIProviderState:
         client = self._require_client()
-        account = client.account_read(refresh_token=False)
-        authenticated, auth_label = _account_status(account)
+        with sdk_deadline(client):
+            account = client.account_read({"refreshToken": False})
+        authenticated = account.account is not None or not account.requires_openai_auth
+        auth_label = "Codex" if authenticated else ""
+        if account.account is not None:
+            identity = account.account.root
+            if isinstance(identity, ChatgptAccount):
+                auth_label = f"ChatGPT · {identity.plan_type.value}"
+            elif identity.type == "apiKey":
+                auth_label = "APIキー"
+            else:
+                auth_label = "Amazon Bedrock"
         if not authenticated:
             return self._set_state(
                 availability="available",
@@ -153,8 +142,31 @@ class CodexAIProvider:
                 login_available=True,
                 error="",
             )
-        model_result = client.model_list(limit=100, include_hidden=False)
-        models = _normalize_models(model_result)
+        models: list[AIModel] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        with sdk_deadline(client):
+            for _page in range(MAX_MODEL_LIST_PAGES):
+                model_result = (
+                    client.model_list(include_hidden=False)
+                    if cursor is None
+                    else client.request(
+                        "model/list", {"cursor": cursor, "includeHidden": False}, response_model=ModelListResponse
+                    )
+                )
+                models.extend(
+                    AIModel(model_id=item.id, display_name=item.display_name or item.id, is_default=item.is_default)
+                    for item in model_result.data
+                    if not item.hidden
+                )
+                cursor = model_result.next_cursor
+                if cursor is None:
+                    break
+                if not cursor or cursor in seen_cursors:
+                    raise CodexAIProviderError("Codexモデル一覧のページ情報が不正です")
+                seen_cursors.add(cursor)
+            else:
+                raise CodexAIProviderError("Codexモデル一覧のページ数が上限を超えました")
         if not models:
             raise CodexAIProviderError("利用可能なCodexモデルが返されませんでした")
         available = {item.model_id for item in models}
@@ -174,7 +186,7 @@ class CodexAIProvider:
             auth_label=auth_label,
             login_url="",
             login_id="",
-            models=models,
+            models=tuple(models),
             selected_model=selected,
             login_available=True,
             error=model_error,
@@ -183,17 +195,17 @@ class CodexAIProvider:
     def login(self, *, relogin: bool = False) -> AIProviderState:
         client = self._require_client()
         if relogin:
-            client.account_logout()
-        result = client.account_login_start(
-            login_type="chatgpt",
-            use_hosted_login_success_page=True,
-            app_brand="chatgpt",
-        )
-        login_id = str(result.get("loginId") or "")
-        login_url = str(result.get("authUrl") or result.get("url") or "")
-        if not login_url:
+            with sdk_deadline(client):
+                client.account_logout()
+        with sdk_deadline(client):
+            result = client.account_login_start(
+                {"type": "chatgpt", "useHostedLoginSuccessPage": True, "appBrand": "chatgpt"}
+            )
+        login = result.root
+        if not isinstance(login, ChatgptLoginAccountResponse) or not login.auth_url:
             raise CodexAIProviderError("ログイン用URLが返されませんでした")
-        return self._set_state(
+        login_id, login_url = login.login_id, login.auth_url
+        state = self._set_state(
             availability="available",
             auth_state="login_pending",
             login_id=login_id,
@@ -201,10 +213,15 @@ class CodexAIProvider:
             login_available=True,
             error="",
         )
+        threading.Thread(
+            target=self._consume_login, args=(client, login_id), name="codex-login-events", daemon=True
+        ).start()
+        return state
 
     def logout(self) -> AIProviderState:
         client = self._require_client()
-        client.account_logout()
+        with sdk_deadline(client):
+            client.account_logout()
         return self._set_state(
             availability="available",
             auth_state="unauthenticated",
@@ -232,124 +249,138 @@ class CodexAIProvider:
         existing_session_id: str = "",
     ) -> AIProviderSession:
         client = self._require_client()
-        if existing_session_id:
-            result = client.thread_resume(
-                existing_session_id,
-                model=model_id,
-                cwd=workspace_root,
-                approval_policy="never",
-                sandbox="read-only",
-            )
-        else:
-            result = client.thread_start(
-                {
-                    "model": model_id,
-                    "cwd": workspace_root,
-                    "approvalPolicy": "never",
-                    "sandbox": "read-only",
-                    "serviceName": "subtitle_edit_bay",
-                }
-            )
-        session_id = _extract_id(result, "thread")
-        if not session_id:
-            raise CodexAIProviderError("Codexチャットを開始または再開できませんでした")
+        params: JsonObject = {
+            "model": model_id,
+            "cwd": workspace_root,
+            "approvalPolicy": "never",
+            "sandbox": "read-only",
+        }
+        with sdk_deadline(client):
+            if existing_session_id:
+                session_id = client.thread_resume(existing_session_id, params).thread.id
+            else:
+                session_id = client.thread_start({**params, "serviceName": "subtitle_edit_bay"}).thread.id
         return AIProviderSession(session_id=session_id)
 
     def send_prompt(self, request: AIProviderPrompt) -> AIProviderPromptResult:
         client = self._require_client()
-        response = client.turn_start(
-            thread_id=request.session.session_id,
-            prompt=request.prompt,
-            model=request.model_id,
-            cwd=request.workspace_root,
-            approval_policy="never",
-            sandbox_policy={
-                "type": "readOnly",
-                "networkAccess": False,
-            },
-        )
-        return AIProviderPromptResult(turn_id=_extract_id(response, "turn"))
+        with sdk_deadline(client):
+            response = client.turn_start(
+                request.session.session_id,
+                request.prompt,
+                {
+                    "model": request.model_id,
+                    "cwd": request.workspace_root,
+                    "approvalPolicy": "never",
+                    "sandboxPolicy": {"type": "readOnly", "networkAccess": False},
+                },
+            )
+        turn_id = response.turn.id
+        threading.Thread(
+            target=self._consume_turn, args=(client, turn_id), name="codex-chat-events", daemon=True
+        ).start()
+        return AIProviderPromptResult(turn_id=turn_id)
 
     def cancel_active_turn(self, *, session_id: str, turn_id: str) -> None:
         if not session_id or not turn_id:
             return
-        self._require_client().turn_interrupt(turn_id, thread_id=session_id)
+        client = self._require_client()
+        with sdk_deadline(client):
+            client.turn_interrupt(session_id, turn_id)
 
     def cancel(self, *, session_id: str, turn_id: str) -> None:
         self.cancel_active_turn(session_id=session_id, turn_id=turn_id)
 
     def close(self) -> None:
         with self._lock:
+            self._closed = True
             client = self._client
             self._client = None
         if client is not None:
             try:
-                client.stop()
+                client.close()
             except Exception:
                 pass
         self._set_state(availability="disconnected", auth_state="unknown")
 
-    def _on_notification(self, notification: CodexNotification) -> None:
-        method = notification.method
-        raw_params: object = notification.params
-        params: Mapping[str, object] = raw_params if is_string_object_mapping(raw_params) else {}
-        if method == "account/login/completed":
-            if bool(params.get("success", False)):
+    def _consume_global(self, client: CodexClient) -> None:
+        try:
+            while self._client is client:
+                event = client.next_notification()
+                if self._client is client:
+                    self._on_notification(event)
+        except Exception as error:
+            self._connection_failed(client, error)
+
+    def _consume_login(self, client: CodexClient, login_id: str) -> None:
+        try:
+            result = client.wait_for_login_completed(login_id)
+            if self._client is client:
+                self._on_notification(Notification("account/login/completed", result))
+        except Exception as error:
+            self._connection_failed(client, error)
+
+    def _consume_turn(self, client: CodexClient, turn_id: str) -> None:
+        try:
+            while self._client is client:
+                event = client.next_turn_notification(turn_id)
+                if self._client is not client:
+                    return
+                self._on_notification(event)
+                if isinstance(event.payload, TurnCompletedNotification):
+                    return
+        except Exception as error:
+            self._connection_failed(client, error)
+        finally:
+            client.unregister_turn_notifications(turn_id)
+
+    def _connection_failed(self, client: CodexClient, error: Exception) -> None:
+        with self._lock:
+            if self._client is not client:
+                return
+            self._client = None
+        try:
+            client.close()
+        except Exception:
+            pass
+        self._on_disconnect(error)
+
+    def _on_notification(self, notification: Notification) -> None:
+        payload = notification.payload
+        if isinstance(payload, AccountLoginCompletedNotification):
+            if payload.success:
                 self._emit(AIProviderEvent(kind="auth_changed", refresh_state=True))
             else:
-                error = self._safe_error(params.get("error") or "認証が完了しませんでした")
                 self._set_state(
                     auth_state="error",
                     login_url="",
-                    error=f"Codexの認証に失敗しました: {error}",
+                    error=f"Codexの認証に失敗しました: {self._safe_error(payload.error or '認証が完了しませんでした')}",
                 )
-            return
-        if method == "account/updated":
+        elif isinstance(payload, AccountUpdatedNotification):
             if self.state.auth_state not in {"logging_in", "login_pending"}:
                 self._emit(AIProviderEvent(kind="auth_changed", refresh_state=True))
-            return
-        if method == "turn/started":
-            turn_id = _extract_id(params, "turn") or str(params.get("turnId", ""))
-            self._emit(AIProviderEvent(kind="turn_started", turn_id=turn_id))
-            return
-        if method == "item/agentMessage/delta":
-            delta = str(params.get("delta") or params.get("text") or "")
-            if delta:
-                self._emit(AIProviderEvent(kind="text_delta", text=delta))
-            return
-        if method == "item/completed":
-            item = params.get("item")
-            if is_string_object_mapping(item) and item.get("type") == "agentMessage":
-                self._emit(
-                    AIProviderEvent(
-                        kind="message_completed",
-                        text=str(item.get("text") or ""),
-                    )
-                )
-            return
-        if method == "error":
-            payload = params.get("error", params)
-            detail = payload.get("message") if is_string_object_mapping(payload) else payload
+        elif isinstance(payload, TurnStartedNotification):
+            self._emit(AIProviderEvent(kind="turn_started", turn_id=payload.turn.id))
+        elif isinstance(payload, AgentMessageDeltaNotification):
+            self._emit(AIProviderEvent(kind="text_delta", text=payload.delta))
+        elif isinstance(payload, ItemCompletedNotification):
+            item = payload.item.root
+            if isinstance(item, AgentMessageThreadItem):
+                self._emit(AIProviderEvent(kind="message_completed", text=item.text))
+        elif isinstance(payload, ErrorNotification):
             self._emit(
                 AIProviderEvent(
-                    kind="error",
-                    error=f"Codexの応答でエラーが発生しました: {self._safe_error(detail)}",
+                    kind="error", error=f"Codexの応答でエラーが発生しました: {self._safe_error(payload.error.message)}"
                 )
             )
-            return
-        if method == "turn/completed":
-            turn = params.get("turn", params)
-            status = str(turn.get("status", "completed") if is_string_object_mapping(turn) else "completed")
-            detail = ""
-            if status == "failed" and is_string_object_mapping(turn):
-                payload = turn.get("error", {})
-                raw_detail = payload.get("message") if is_string_object_mapping(payload) else payload
-                detail = "" if raw_detail is None else str(raw_detail)
+        elif isinstance(payload, TurnCompletedNotification):
+            turn = payload.turn
+            detail = turn.error.message if turn.error is not None else ""
             self._emit(
                 AIProviderEvent(
                     kind="turn_completed",
-                    status=status,
-                    error=self._safe_error(detail or "原因を確認できません") if status == "failed" else "",
+                    status=turn.status.value,
+                    error=self._safe_error(detail or "原因を確認できません") if turn.status.value == "failed" else "",
                 )
             )
 
@@ -366,7 +397,7 @@ class CodexAIProvider:
             )
         )
 
-    def _require_client(self) -> CodexAppServerClientProtocol:
+    def _require_client(self) -> CodexClient:
         with self._lock:
             client = self._client
             state = self._state
@@ -426,57 +457,3 @@ class CodexAIProvider:
 
 class CodexAIProviderError(RuntimeError):
     pass
-
-
-def _account_status(result: Mapping[str, object]) -> tuple[bool, str]:
-    legacy_authenticated = result.get("authenticated", result.get("loggedIn"))
-    account = result.get("account")
-    authenticated = bool(legacy_authenticated)
-    if is_string_object_mapping(account):
-        authenticated = True
-        account_type = str(account.get("type", ""))
-        plan_type = str(account.get("planType", "") or "")
-    else:
-        account_type = str(result.get("authMode", "") or "")
-        plan_type = str(result.get("planType", "") or "")
-        if legacy_authenticated is None and result.get("requiresOpenaiAuth") is False:
-            authenticated = True
-    type_labels = {
-        "chatgpt": "ChatGPT",
-        "apikey": "APIキー",
-        "apiKey": "APIキー",
-        "amazonBedrock": "Amazon Bedrock",
-        "bedrockApiKey": "Amazon Bedrock",
-    }
-    label = type_labels.get(account_type, "Codex") if authenticated else ""
-    if plan_type:
-        label = f"{label} · {plan_type}"
-    return authenticated, label
-
-
-def _normalize_models(result: Mapping[str, object]) -> tuple[AIModel, ...]:
-    normalized: list[AIModel] = []
-    raw_models = result.get("data", [])
-    if not is_object_list(raw_models):
-        return ()
-    for item in raw_models:
-        if not is_string_object_mapping(item) or bool(item.get("hidden", False)):
-            continue
-        model_id = str(item.get("id") or item.get("model") or "").strip()
-        if not model_id:
-            continue
-        normalized.append(
-            AIModel(
-                model_id=model_id,
-                display_name=str(item.get("displayName") or model_id),
-                is_default=bool(item.get("isDefault", False)),
-            )
-        )
-    return tuple(normalized)
-
-
-def _extract_id(result: Mapping[str, object], key: str) -> str:
-    nested = result.get(key, result)
-    if is_string_object_mapping(nested):
-        return str(nested.get("id", "")) or str(result.get(f"{key}Id", ""))
-    return str(result.get(f"{key}Id", ""))

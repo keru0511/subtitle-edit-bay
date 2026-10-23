@@ -3,6 +3,11 @@
 通常のCIでは、テストを実行環境への依存度ごとに分けます。分類の正本は
 `tests/ci_test_groups.json`、実行入口は `scripts/run_ci_tests.py` です。
 
+Linuxの通常CI・リリース検証・クラウド開発は、同じセットアップスクリプト、
+Python依存lock、FFmpeg/ffprobe・Node.jsを使用します。
+準備後に `source runtime/linux-dev/env.sh` を実行すれば、以下のコマンドをそのまま使えます。
+詳細は [Linux共通環境](../runtime/linux-dev/README.md) を参照してください。
+
 ## 分類と実行環境
 
 | グループ | 実行環境 | 対象 |
@@ -14,6 +19,8 @@
 | `windows-launcher-runtime` | Windows | Python外の依存を追加せず、PowerShell・BAT・インストーラー更新経路を実プロセスと実ファイルシステムで検証するテスト |
 | `windows-ffmpeg-runtime` | Windows | Windows版FFmpeg、Qt Multimedia、GUI音声ミキサーを実際に動かすスモークテスト |
 | `ffmpeg6-compat` | Windows | 固定したFFmpeg 6.1.1でフィルタースクリプト互換性を検証するテスト |
+
+SDK同梱Codexの起動・初期化、構造化出力と隔離設定、タイムアウト、停止・終了時の接続解放、ランキング検証失敗後の接続再利用はLinuxで検証し、Windowsでも明示的なselectorで再実行します。実アカウントへのログインやモデル推論は通常CIでは実行しません。
 
 Windowsの `Main.qml` 起動スモークは、テストモジュールとは別に
 `Start GUI on Windows` ステップで実行します。インストーラースモークと

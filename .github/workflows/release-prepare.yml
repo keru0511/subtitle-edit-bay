@@ -70,12 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      PYTHONUTF8: "1"
-      QT_QPA_PLATFORM: offscreen
-      QT_QUICK_CONTROLS_STYLE: Basic
-      QT_QUICK_BACKEND: software
-      QSG_RHI_BACKEND: software
-      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      BASH_ENV: ${{ github.workspace }}/source/runtime/linux-dev/env.sh
     steps:
       - name: Check out exact source
         uses: actions/checkout@v7
@@ -84,26 +79,9 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
           path: source
-      - name: Install Linux runtime dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg libegl1 libpulse0
-          ffmpeg -version
-          ffprobe -version
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.10"
-          cache: pip
-          cache-dependency-path: |
-            source/requirements.txt
-            source/requirements-dev.txt
-      - name: Install test dependencies
+      - name: Set up the shared Linux environment
         working-directory: source
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install -r requirements-dev.txt
+        run: bash scripts/setup_linux.sh
       - name: Check standard unittest discovery
         working-directory: source
         run: python scripts/check_unittest_discovery.py
@@ -118,6 +96,10 @@ jobs:
         env:
           RUN_FFMPEG_SMOKE: "1"
         run: python scripts/run_ci_tests.py --group ffmpeg-runtime
+
+      - name: Check GUI startup
+        working-directory: source
+        run: bash scripts/check_gui_startup.sh
 
   build:
     name: Build and verify Windows installer

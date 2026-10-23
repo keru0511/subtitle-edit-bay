@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Callable, Mapping
 from uuid import uuid4
 
+from openai_codex import __version__ as CODEX_SDK_VERSION
+from openai_codex.client import CodexClient
 from PySide6.QtCore import (
     QUrl,
 )
@@ -27,14 +29,12 @@ from .gui_codex_state import (
     CodexSessionSnapshot,
     build_codex_context,
 )
-from .codex_app_server_client import CodexAppServerClient
+from .codex_sdk import create_codex_client
 from .codex_actions import ActionDispatcher, ActionResult, ActionScope
 from .codex_chat_routing import route_subtitle_chat_request
-from .codex_runtime import detect_codex
 from .data_boundary import coerce_float, is_string_object_dict_list
 from .gui_codex_chat_state import (
     CodexChatController,
-    CodexChatError,
     CodexChatSnapshot,
 )
 from .gemini_acp_provider import GeminiAcpProvider
@@ -436,32 +436,9 @@ class AIChatFacade(FeatureFacade):
             )
         )
 
-    def _create_codex_chat_client(self, cwd: str | Path | None = None) -> CodexAppServerClient:
-        backend = self._backend
-        runtime = detect_codex(backend.workspace_root)
-        if not runtime.available:
-            self._queue_codex_system_log(
-                f"Codex CLI検出失敗: {runtime.error}",
-                severity="ERROR",
-            )
-            raise CodexChatError(runtime.error)
-        self._queue_codex_system_log(
-            "Codex CLI検出成功: "
-            f"version={runtime.version}, distribution={runtime.distribution}, "
-            f"executable={runtime.executable}"
-        )
-
-        def record_app_server(message: str) -> None:
-            self._queue_codex_system_log(
-                message,
-                severity="ERROR" if message.startswith("ERROR:") else "INFO",
-            )
-
-        return CodexAppServerClient(
-            runtime.command,
-            cwd=cwd or backend.workspace_root,
-            log_callback=record_app_server,
-        )
+    def _create_codex_chat_client(self, cwd: str | Path | None = None) -> CodexClient:
+        self._queue_codex_system_log(f"Codex SDK初期化: version={CODEX_SDK_VERSION}, runtime=SDK同梱版")
+        return create_codex_client(cwd or self._backend.workspace_root)
 
     def _create_gemini_chat_provider(self) -> GeminiAcpProvider:
         backend = self._backend

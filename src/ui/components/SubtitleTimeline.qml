@@ -17,6 +17,7 @@ Rectangle {
     readonly property int laneInset: 3
     property bool editable: true
     property bool showSegments: true
+    property bool applyClipFilter: false
     property bool showTrackVolume: false
     property var seekHandler: null
     property var lanes: timelineRoot.speakers
@@ -36,7 +37,7 @@ Rectangle {
         var segments = timelineRoot.showSegments
             ? timelineRoot.appBackend.subtitles.visibleSubtitleSegments(viewportStart, viewportEnd) : [];
         var scope = timelineRoot.appBackend.subtitles.subtitleClipSourceWindow;
-        if (scope.active) {
+        if (timelineRoot.applyClipFilter && scope.active) {
             var filtered = [];
             if (scope.hasTranscript) {
                 for (var i = 0; i < segments.length; ++i) {
@@ -88,6 +89,7 @@ Rectangle {
     }
 
     onPixelsPerSecondChanged: timelineRoot.refreshViewport()
+    onApplyClipFilterChanged: Qt.callLater(timelineRoot.refreshViewport)
     signal segmentActivated(int index)
     Connections {
         target: timelineRoot.appBackend.subtitles

@@ -29,6 +29,12 @@ QtObject {
         && timeDraftProjectPath === projectPath
         && (!timeDraftAcceptableInput || !isFinite(Number(timeDraftText)) || Number(timeDraftText) < 0)
 
+    function canAddToVisibleClip(seconds) {
+        var scope = state.subtitles.subtitleClipSourceWindow;
+        return !scope.active || (scope.hasTranscript
+            && seconds >= Number(scope.start) && seconds < Number(scope.end));
+    }
+
     function canSplitSelectedSegment(positionMs) {
         var index = state.subtitles.selectedSegmentIndex;
         var segmentCount = state.subtitles.segmentCount;

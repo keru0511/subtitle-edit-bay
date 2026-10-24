@@ -306,6 +306,12 @@ ApplicationWindow {
             return
         if (!root.commitPendingEdits())
             return
+        if (!root.editorMode && action === "add" && !subtitleEditorState.canAddToVisibleClip(atSeconds))
+            return
+        // 入力の確定によって対象字幕がクリップ範囲外へ移動する場合もある。
+        if (!root.editorMode && (action === "delete" || action === "split")
+                && root.appBackend.subtitles.filteredSelectedSegmentIndex < 0)
+            return
         switch (action) {
         case "add": root.appBackend.subtitles.addSegment(atSeconds); break
         case "delete": root.appBackend.subtitles.deleteSelectedSegment(); break
@@ -916,6 +922,10 @@ ApplicationWindow {
             updateDraft: subtitleEditorState.updateSubtitleDraft
             commitDraft: subtitleEditorState.commitSubtitleDraft
             pendingDraftTextForSegment: subtitleEditorState.pendingTextForSegment
+            onClipFilterRequested: function(clipId) {
+                if (root.commitPendingEdits())
+                    root.appBackend.subtitles.setSubtitleClipFilter(clipId)
+            }
             onSeekRequested: function(positionMilliseconds) {
                 root.seekSharedPlayer(positionMilliseconds, "source")
             }

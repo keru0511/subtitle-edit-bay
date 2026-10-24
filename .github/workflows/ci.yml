@@ -405,6 +405,11 @@ jobs:
           tests.test_gui_editor.GuiEditorRegressionTests.test_subtitle_clip_filter_survives_edits_history_and_saving
           tests.test_gui_editor.GuiEditorRegressionTests.test_subtitle_clip_filter_tracks_trimming_and_removal
           tests.test_gui_editor.GuiEditorRegressionTests.test_subtitle_clip_filter_qml_maps_rows_and_excludes_other_assets
+          tests.test_gui_editor.GuiEditorRegressionTests.test_subtitle_clip_filter_blocks_actions_on_hidden_selection
+          tests.test_gui_editor.GuiEditorRegressionTests.test_subtitle_clip_filter_waits_for_complete_time_input
+          tests.test_gui_editor.GuiEditorRegressionTests.test_subtitle_clip_filter_preserves_ime_and_locks_during_processing
+          tests.test_gui_editor.GuiEditorRegressionTests.test_subtitle_clip_filter_does_not_hide_expanded_editor_timeline
+          tests.test_gui_editor.GuiEditorRegressionTests.test_subtitle_clip_filter_adds_only_to_visible_primary_source
           tests.test_gui_editor.GuiEditorRegressionTests.test_transcription_merge_append_commits_pending_time_and_preserves_subtitles
           tests.test_gui_editor.GuiEditorRegressionTests.test_transcription_merge_cancel_preserves_existing_project
           tests.test_gui_editor.GuiEditorRegressionTests.test_web_dictionary_candidate_actions_save_and_reload_from_screen

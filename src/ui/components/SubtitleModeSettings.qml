@@ -27,6 +27,7 @@ Item {
     signal seekRequested(real positionMilliseconds)
     signal speakerColorRequested(int speakerIndex, string currentColor)
     signal contentYChangedByUser(real value)
+    signal clipFilterRequested(string clipId)
 
     readonly property var clipFilterChoices: {
         var choices = [{ "clipId": "", "label": "全シーケンス" }]
@@ -173,12 +174,19 @@ Item {
             ComboBox {
                 id: clipFilterCombo
                 objectName: "workspaceSubtitleClipFilter"
+                enabled: !root.backend.running && !root.imeComposing
                 Layout.fillWidth: true
                 model: root.clipFilterChoices
                 textRole: "label"
                 valueRole: "clipId"
                 currentIndex: root.clipFilterIndex(root.backend.subtitles.subtitleClipFilterId)
-                onActivated: root.backend.subtitles.setSubtitleClipFilter(String(currentValue))
+                onActivated: {
+                    root.clipFilterRequested(String(currentValue))
+                    // 入力未確定で拒否された場合も、選択表示を正本へ戻す。
+                    currentIndex = Qt.binding(function() {
+                        return root.clipFilterIndex(root.backend.subtitles.subtitleClipFilterId)
+                    })
+                }
             }
         }
 

@@ -515,6 +515,173 @@ Window {
         self.gui.wait_until(lambda: _qt_number(subtitle_list, "count") == 3, description="全字幕へ戻る")
         self.assertEqual(_qt_number(combo, "currentIndex"), 0)
 
+    def _select_subtitle_clip_row(self, window: QQuickWindow) -> None:
+        row = self.gui.find_visual_item_by_properties(
+            self._quick_item(window, "workspaceSubtitleList"), {"editorText": "範囲内"}
+        )
+        frames = QSignalSpy(window.frameSwapped)
+        self._click(window, row)
+        window.update()
+        self.gui.wait_until(lambda: frames.count() > 0, description="選択した字幕入力欄の描画")
+
+    def test_subtitle_clip_filter_blocks_actions_on_hidden_selection(self) -> None:
+        """Windows GUI CI必須: 非表示の選択字幕を削除・分割せず、時刻確定後にも対象を検証する。"""
+        _, clip_id = self._load_subtitle_clip_project()
+        _, window = self._load_qml()
+        self.app.setEditorPlayhead(2_000, "source")
+        self.app.subtitles.selectSegment(0)
+        self.assertTrue(self.app.subtitles.setSubtitleClipFilter(clip_id))
+        self.gui.process_events()
+        delete = self._quick_item(window, "workspaceSubtitleDeleteButton")
+        split = self._quick_item(window, "workspaceSubtitleSplitButton")
+        self.assertEqual(self.app.subtitles.filteredSelectedSegmentIndex, -1)
+        self.assertFalse(delete.isEnabled())
+        self.assertFalse(split.isEnabled())
+        self._select_subtitle_clip_row(window)
+        self.assertTrue(delete.isEnabled())
+        start = self._quick_item(window, "workspaceSubtitleStartField")
+        self._click(window, start)
+        self._replace_focused_time(window, start, "16")
+        # 削除のクリックで時刻入力が確定し、対象字幕が範囲外へ移動する。
+        self._click(window, delete)
+        self.assertEqual(self.app.subtitles.segmentCount, 3)
+        self.assertEqual(self.app.subtitles.segmentAt(1)["id"], "inside")
+        self.assertEqual(self.app.subtitles.segmentAt(1)["start"], 16.0)
+        self.assertEqual(self.app.subtitles.filteredSegmentCount, 0)
+        self.assertFalse(delete.isEnabled())
+        self._click(window, self._quick_item(window, "workspaceSubtitleUndoButton"))
+        self.assertEqual(self.app.subtitles.filteredSegmentCount, 1)
+        self.assertTrue(delete.isEnabled())
+        self._click(window, delete)
+        self.assertEqual(self.app.subtitles.segmentCount, 2)
+        self.assertEqual(self.app.subtitles.segmentAt(0)["id"], "before")
+        self.assertEqual(self.app.subtitles.segmentAt(1)["id"], "after")
+
+    def test_subtitle_clip_filter_waits_for_complete_time_input(self) -> None:
+        """Windows GUI CI必須: 未完成の時刻がある間は表示範囲を変えず、修正後に切り替える。"""
+        _, clip_id = self._load_subtitle_clip_project()
+        self.assertTrue(self.app.subtitles.setSubtitleClipFilter(clip_id))
+        _, window = self._load_qml()
+        self._select_subtitle_clip_row(window)
+        start = self._quick_item(window, "workspaceSubtitleStartField")
+        combo = self._quick_item(window, "workspaceSubtitleClipFilter")
+        self._click(window, start)
+        QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+        QTest.keyClick(window, Qt.Key.Key_1)
+        QTest.keyClick(window, Qt.Key.Key_E)
+        self.assertEqual(_qt_string(start, "text"), "1e")
+        self._click(window, combo)
+        QTest.keyClick(window, Qt.Key.Key_Home)
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.gui.process_events()
+        self.assertEqual(self.app.subtitles.subtitleClipFilterId, clip_id)
+        self.assertEqual(_qt_number(combo, "currentIndex"), 1)
+        self.assertTrue(start.isVisible())
+        self.assertEqual(_qt_string(start, "text"), "1e")
+        self.assertEqual(self.app.stage, "CHECK")
+        self._click(window, start)
+        self._replace_focused_time(window, start, "11")
+        self._click(window, combo)
+        QTest.keyClick(window, Qt.Key.Key_Home)
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.gui.process_events()
+        self.assertEqual(self.app.subtitles.subtitleClipFilterId, "")
+        self.assertEqual(self.app.subtitles.segmentAt(1)["start"], 11.0)
+        self.assertEqual(_qt_number(combo, "currentIndex"), 0)
+        self.assertTrue(self.app.subtitles.setSubtitleClipFilter(clip_id))
+        self.gui.process_events()
+        self.assertEqual(_qt_number(combo, "currentIndex"), 1)
+
+    def test_subtitle_clip_filter_preserves_ime_and_locks_during_processing(self) -> None:
+        """Windows GUI CI必須: IME未確定・処理中は表示範囲を変えず、確定文字を元字幕へ保存する。"""
+        _, clip_id = self._load_subtitle_clip_project()
+        self.assertTrue(self.app.subtitles.setSubtitleClipFilter(clip_id))
+        _, window = self._load_qml()
+        self._select_subtitle_clip_row(window)
+        caption = self._quick_item(window, "workspaceSubtitleTextArea")
+        combo = self._quick_item(window, "workspaceSubtitleClipFilter")
+        self._click(window, caption)
+        self.assertTrue(caption.hasActiveFocus())
+        QTest.keySequence(window, QKeySequence(QKeySequence.StandardKey.SelectAll))
+        QCoreApplication.sendEvent(caption, QInputMethodEvent("未確定", []))
+        self.gui.process_events()
+        self.assertTrue(qt_property_value(caption, "inputMethodComposing"))
+        self.assertFalse(combo.isEnabled())
+        commit = QInputMethodEvent("", [])
+        commit.setCommitString("確定した本文")
+        QCoreApplication.sendEvent(caption, commit)
+        self.gui.process_events()
+        self.assertTrue(combo.isEnabled())
+        self._click(window, combo)
+        QTest.keyClick(window, Qt.Key.Key_Home)
+        QTest.keyClick(window, Qt.Key.Key_Return)
+        self.gui.process_events()
+        self.assertEqual(self.app.subtitles.subtitleClipFilterId, "")
+        self.assertEqual(self.app.subtitles.segmentAt(1)["text"], "確定した本文")
+        self.app._running = True
+        self.app.runningChanged.emit()
+        self.gui.process_events()
+        self.assertFalse(combo.isEnabled())
+        self.app._running = False
+        self.app.runningChanged.emit()
+        self.gui.process_events()
+        self.assertTrue(combo.isEnabled())
+
+    def test_subtitle_clip_filter_does_not_hide_expanded_editor_timeline(self) -> None:
+        """Windows GUI CI必須: 拡大編集では全字幕の一覧と波形を表示し、戻るとクリップ絞り込みを保つ。"""
+        _, clip_id = self._load_subtitle_clip_project()
+        self.assertTrue(self.app.subtitles.setSubtitleClipFilter(clip_id))
+        _, window = self._load_qml()
+        window.setProperty("editorPixelsPerSecond", 16)
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        timeline = self._quick_item(window, "editorTimeline")
+        table = self._quick_item(window, "captionTable")
+        self.assertEqual(_qt_number(table, "count"), 3)
+        self.gui.wait_until(
+            lambda: [item["id"] for item in _dict_list_at(self._qml_value(timeline, "visibleSegments"))]
+            == ["before", "inside", "after"],
+            description="拡大編集の全字幕タイムライン",
+        )
+        self.assertEqual(self.app.subtitles.subtitleClipFilterId, clip_id)
+        self._click(window, self._quick_item(window, "editorBackButton"))
+        subtitle_list = self._quick_item(window, "workspaceSubtitleList")
+        workspace_timeline = self._quick_item(window, "workspaceSubtitleTimeline")
+        self.gui.wait_until(
+            lambda: _qt_number(subtitle_list, "count") == 1
+            and [item["id"] for item in _dict_list_at(self._qml_value(workspace_timeline, "visibleSegments"))]
+            == ["inside"],
+            description="通常編集へ戻った後のクリップ絞り込み",
+        )
+
+    def test_subtitle_clip_filter_adds_only_to_visible_primary_source(self) -> None:
+        """Windows GUI CI必須: 範囲外や追加動画へ隠れた主動画字幕を追加せず、範囲内では作成できる。"""
+        _, clip_id = self._load_subtitle_clip_project()
+        self.assertTrue(self.app.subtitles.setSubtitleClipFilter(clip_id))
+        _, window = self._load_qml()
+        add = self._quick_item(window, "workspaceSubtitleAddButton")
+        for position, enabled in ((0, False), (10_000, True), (16_000, False), (12_000, True)):
+            with self.subTest(position=position):
+                self.app.setEditorPlayhead(position, "source")
+                self.gui.process_events()
+                self.assertEqual(add.isEnabled(), enabled)
+        self._click(window, add)
+        self.assertEqual(self.app.subtitles.segmentCount, 4)
+        self.assertEqual(self.app.subtitles.filteredSegmentCount, 2)
+        self._click(window, self._quick_item(window, "workspaceSubtitleUndoButton"))
+        self.assertEqual(self.app.subtitles.segmentCount, 3)
+        other_video = self.root / "other.mp4"
+        other_video.write_bytes(b"other video fixture")
+        asset_id = self._add_second_sequence_asset(other_video, duration=30.0)
+        self.assertTrue(self.app.sequence.addSequenceClip(asset_id))
+        other_clip_id = str(self.app.sequence.sequenceClips[-1]["clipId"])
+        self.assertTrue(self.app.subtitles.setSubtitleClipFilter(other_clip_id))
+        self.gui.process_events()
+        self.assertFalse(add.isEnabled())
+        self.assertEqual(self.app.subtitles.filteredSegmentCount, 0)
+        self._click(window, self._quick_item(window, "editSubtitlesButton"))
+        self.assertTrue(self._quick_item(window, "addCaptionButton").isEnabled())
+        self.assertTrue(self._quick_item(window, "deleteCaptionButton").isEnabled())
+
     def test_workflow_and_ai_facades_publish_state_to_qml(self) -> None:
         self._load_project()
         window = self._load_feature_binding_probe()

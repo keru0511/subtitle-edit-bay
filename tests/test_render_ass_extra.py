@@ -16,9 +16,10 @@ from src.render_ass import (
     style_name_for_speaker,
     style_name_for_track,
 )
+from tests.typed_case import TypedTestCase
 
 
-class RenderAssExtraTests(unittest.TestCase):
+class RenderAssExtraTests(TypedTestCase):
     def test_cli_renders_raw_transcript_with_typed_arguments(self) -> None:
         segments: list[dict[str, object]] = [
             {

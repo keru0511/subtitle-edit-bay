@@ -10,9 +10,10 @@ from src.transcription_context import (
     normalize_transcription_context,
     transcription_context_from_mapping,
 )
+from tests.typed_case import TypedTestCase
 
 
-class TranscriptionContextModelTests(unittest.TestCase):
+class TranscriptionContextModelTests(TypedTestCase):
     def test_default_context_has_stable_project_shape(self) -> None:
         expected: TranscriptionContextPayload = {
             "game_title": "",
@@ -21,6 +22,8 @@ class TranscriptionContextModelTests(unittest.TestCase):
             "dictionary_path": None,
             "dictionary_confirmed": False,
             "web_dictionary_enabled": False,
+            "web_dictionary_url": "",
+            "web_dictionary_snippet": "",
             "web_dictionary_candidates": [],
             "web_dictionary_terms": [],
             "web_dictionary_candidate_metadata": [],
@@ -39,6 +42,8 @@ class TranscriptionContextModelTests(unittest.TestCase):
                 "dictionary_path": " dictionaries/splatoon.json ",
                 "dictionary_confirmed": True,
                 "web_dictionary_enabled": True,
+                "web_dictionary_url": " https://example.test/terms ",
+                "web_dictionary_snippet": " Game terms ",
                 "web_dictionary_candidates": ["候補A", "候補A", "候補B", ""],
                 "web_dictionary_terms": ["web語", "web語", " "],
             }
@@ -50,6 +55,8 @@ class TranscriptionContextModelTests(unittest.TestCase):
         self.assertEqual(context.dictionary_path, "dictionaries/splatoon.json")
         self.assertTrue(context.dictionary_confirmed)
         self.assertTrue(context.web_dictionary_enabled)
+        self.assertEqual(context.web_dictionary_url, "https://example.test/terms")
+        self.assertEqual(context.web_dictionary_snippet, "Game terms")
         self.assertEqual(context.web_dictionary_candidates, ("候補A", "候補B"))
         self.assertEqual(context.web_dictionary_terms, ("web語",))
 

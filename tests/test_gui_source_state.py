@@ -7,9 +7,10 @@ from pathlib import Path
 
 from src import gui_state_base
 from src.gui_source_state import SourceSelection, build_speaker_entries_from_files
+from tests.typed_case import TypedTestCase
 
 
-class GuiSourceStateTests(unittest.TestCase):
+class GuiSourceStateTests(TypedTestCase):
     def test_source_selection_serializes_audio_files_as_list(self) -> None:
         selection = SourceSelection(
             video="video.mkv",
@@ -42,13 +43,12 @@ class GuiSourceStateTests(unittest.TestCase):
             alice.write_bytes(b"")
             ignored.write_text("not audio", encoding="utf-8")
             color_config = root / "speaker_colors.json"
+            color_payload: dict[str, object] = {
+                "speakers": {"alice": "#112233"},
+                "files": {"002-bob.wav": "#445566"},
+            }
             color_config.write_text(
-                json.dumps(
-                    {
-                        "speakers": {"alice": "#112233"},
-                        "files": {"002-bob.wav": "#445566"},
-                    }
-                ),
+                json.dumps(color_payload),
                 encoding="utf-8",
             )
 

@@ -4,9 +4,10 @@ import unittest
 
 from src.gui_runtime_state import build_gui_command as build_legacy_gui_command
 from src.gui_state import build_gui_command, build_gui_transcribe_command
+from tests.typed_case import TypedTestCase
 
 
-class GuiStateCommandTests(unittest.TestCase):
+class GuiStateCommandTests(TypedTestCase):
     def test_gui_transcribe_command_uses_subtitle_workflow(self) -> None:
         command = build_gui_command(
             "runtime.json",

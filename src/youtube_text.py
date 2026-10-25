@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
-import json
 from collections import Counter
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+
+from .data_boundary import coerce_float, decode_json, is_object_list, is_object_mapping
 
 STOP_PHRASES = {
     "ああああああ",
@@ -25,34 +27,53 @@ STOP_KEYWORDS = {
 }
 
 
-def load_merged_transcript(path: str) -> dict:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+class YoutubeTextArguments(argparse.Namespace):
+    input: str
 
 
-def clean_text(text: str) -> str:
+def _segment(value: object) -> Mapping[object, object]:
+    if not is_object_mapping(value):
+        raise ValueError("merged transcript segment must be an object")
+    return value
+
+
+def load_merged_transcript(path: str) -> dict[object, object]:
+    payload = decode_json(Path(path).read_text(encoding="utf-8"))
+    if not is_object_mapping(payload):
+        raise ValueError("merged transcript must be an object")
+    return dict(payload)
+
+
+def clean_text(text: object) -> str:
     return " ".join(str(text).replace("\n", " ").split()).strip()
 
 
-def interesting_segments(segments: list[dict], limit: int = 8) -> list[dict]:
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for segment in segments:
+def _score_key(item: tuple[tuple[int, int, float], dict[object, object]]) -> tuple[int, int, float]:
+    return item[0]
+
+
+def interesting_segments(segments: Sequence[object], limit: int = 8) -> list[dict[object, object]]:
+    scored: list[tuple[tuple[int, int, float], dict[object, object]]] = []
+    for raw_segment in segments:
+        segment = _segment(raw_segment)
         text = clean_text(segment.get("text", ""))
         if not text or text in STOP_PHRASES:
             continue
-        duration = max(0.0, float(segment.get("end", 0.0)) - float(segment.get("start", 0.0)))
+        duration = max(0.0, coerce_float(segment.get("end", 0.0)) - coerce_float(segment.get("start", 0.0)))
         score = (
             1 if any(mark in text for mark in "!?！？") else 0,
             min(len(text), 40),
             duration,
         )
         scored.append((score, {**segment, "text": text}))
-    scored.sort(key=lambda item: item[0], reverse=True)
+    scored.sort(key=_score_key, reverse=True)
     return [segment for _, segment in scored[:limit]]
 
 
-def extract_keywords(segments: list[dict], limit: int = 4) -> list[str]:
+def extract_keywords(segments: Sequence[object], limit: int = 4) -> list[str]:
     counter: Counter[str] = Counter()
-    for segment in segments:
+    for raw_segment in segments:
+        segment = _segment(raw_segment)
         text = clean_text(segment.get("text", ""))
         for raw in text.replace("!", " ").replace("?", " ").replace("！", " ").replace("？", " ").split():
             token = raw.strip("。、,.「」『』()[]")
@@ -64,7 +85,8 @@ def extract_keywords(segments: list[dict], limit: int = 4) -> list[str]:
         return keywords
 
     fallback: list[str] = []
-    for segment in segments:
+    for raw_segment in segments:
+        segment = _segment(raw_segment)
         text = clean_text(segment.get("text", ""))
         if len(text) >= 6:
             fallback.append(text[:12])
@@ -73,7 +95,7 @@ def extract_keywords(segments: list[dict], limit: int = 4) -> list[str]:
     return fallback
 
 
-def build_title_candidates(segments: list[dict], video_stem: str, limit: int = 3) -> list[str]:
+def build_title_candidates(segments: Sequence[object], video_stem: str, limit: int = 3) -> list[str]:
     picks = interesting_segments(segments, limit=limit * 2)
     keywords = extract_keywords(picks or segments)
     base_keyword = " / ".join(keywords[:2]) if keywords else video_stem
@@ -103,13 +125,13 @@ def build_title_candidates(segments: list[dict], video_stem: str, limit: int = 3
 
 
 def build_description_text(
-    segments: list[dict],
+    segments: Sequence[object],
     title_candidates: list[str],
     video_stem: str,
     timestamp_offset_seconds: float = 0.0,
 ) -> str:
     picks = interesting_segments(segments, limit=5)
-    speakers = sorted({segment.get("speaker", "UNKNOWN") for segment in segments})
+    speakers = sorted({str(_segment(segment).get("speaker", "UNKNOWN")) for segment in segments})
     keywords = extract_keywords(picks or segments)
 
     lines = [
@@ -135,7 +157,7 @@ def build_description_text(
         lines.append("")
         lines.append("見どころメモ:")
         for segment in picks[:3]:
-            start = max(0.0, float(segment.get("start", 0.0)) + timestamp_offset_seconds)
+            start = max(0.0, coerce_float(segment.get("start", 0.0)) + timestamp_offset_seconds)
             mm = int(start // 60)
             ss = int(start % 60)
             lines.append(f"- {mm:02d}:{ss:02d} {segment.get('speaker', 'UNKNOWN')}: {clean_text(segment['text'])}")
@@ -160,6 +182,8 @@ def derive_youtube_text_paths(merged_json_path: str) -> tuple[Path, Path]:
 def write_youtube_texts(merged_json_path: str, timestamp_offset_seconds: float = 0.0) -> tuple[Path, Path]:
     data = load_merged_transcript(merged_json_path)
     segments = data.get("segments", [])
+    if not is_object_list(segments):
+        raise ValueError("merged transcript segments must be an array")
     merged_path = Path(merged_json_path)
     video_stem = merged_path.stem.removesuffix(".merged")
     title_path, description_path = derive_youtube_text_paths(merged_json_path)
@@ -178,9 +202,11 @@ def write_youtube_texts(merged_json_path: str, timestamp_offset_seconds: float =
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate YouTube title and description drafts from merged transcript JSON.")
+    parser = argparse.ArgumentParser(
+        description="Generate YouTube title and description drafts from merged transcript JSON."
+    )
     parser.add_argument("--input", required=True, help="Path to *.merged.json")
-    args = parser.parse_args()
+    args = parser.parse_args(namespace=YoutubeTextArguments())
 
     title_path, description_path = write_youtube_texts(args.input)
     print(title_path)

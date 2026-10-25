@@ -41,6 +41,7 @@ Rectangle {
 
     component ActionButton: Button {
         id: control
+        focusPolicy: Qt.TabFocus
         property bool primary: false
         property string reason: ""
         Layout.fillWidth: true
@@ -97,6 +98,7 @@ Rectangle {
             }
             SmallButton {
                 objectName: "legacySettingsToggleButton"
+                focusPolicy: Qt.TabFocus
                 text: actionBar.settingsExpanded ? "設定を閉じる" : "文字起こし・出力設定"
                 onClicked: actionBar.settingsRequested()
             }
@@ -109,6 +111,7 @@ Rectangle {
             CategoryLabel { text: "ツール"; visible: !actionBar.compact }
             SmallButton {
                 objectName: "settingsToggleButton"
+                focusPolicy: Qt.TabFocus
                 visible: actionBar.compact
                 text: "設定"
                 implicitHeight: 26

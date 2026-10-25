@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from .data_boundary import decode_json, is_object_list, is_string_object_mapping
 from .installer_migration import MigrationError, RuntimeCapabilities, validate_legacy_workspace
 from .legacy_migration import (
     CACHE_STATE_REMOVABLE_AFTER_SUCCESS,
@@ -149,12 +150,12 @@ def _plan_identity_payload(payload: Mapping[str, object]) -> dict[str, object]:
 
     normalized = dict(payload)
     request = payload.get("request")
-    if isinstance(request, Mapping) and not bool(request.get("overwrite", False)):
+    if is_string_object_mapping(request) and not bool(request.get("overwrite", False)):
         normalized_request = dict(request)
         normalized_request["confirm"] = False
         normalized["request"] = normalized_request
         settings = payload.get("settings")
-        if isinstance(settings, Mapping):
+        if is_string_object_mapping(settings):
             normalized_settings = dict(settings)
             normalized_settings["confirm"] = False
             normalized["settings"] = normalized_settings
@@ -222,9 +223,7 @@ def _filesystem_snapshot_for_path(
             if metadata is None:
                 return None
             if _is_link_like(current, metadata):
-                raise MigrationError(
-                    f"migration snapshot contains a symbolic link or junction: {current}"
-                )
+                raise MigrationError(f"migration snapshot contains a symbolic link or junction: {current}")
             if index < len(components) - 1 and not stat.S_ISDIR(metadata.st_mode):
                 raise MigrationError(f"migration snapshot parent is not a directory: {current}")
 
@@ -250,9 +249,7 @@ def _filesystem_snapshot_for_path(
             )
             return
         if _is_link_like(candidate, metadata):
-            raise MigrationError(
-                f"migration snapshot contains a symbolic link or junction: {candidate}"
-            )
+            raise MigrationError(f"migration snapshot contains a symbolic link or junction: {candidate}")
         if stat.S_ISREG(metadata.st_mode):
             try:
                 payload = candidate.read_bytes()
@@ -293,7 +290,7 @@ def _filesystem_snapshot_for_path(
             }
         )
         try:
-            children = sorted(candidate.iterdir(), key=lambda item: item.name.casefold())
+            children = sorted(candidate.iterdir(), key=_path_sort_key)
         except OSError as exc:
             raise MigrationError(f"unable to snapshot migration directory: {candidate}") from exc
         for child in children:
@@ -302,6 +299,14 @@ def _filesystem_snapshot_for_path(
 
     record(path, relative_root)
     return snapshots
+
+
+def _path_sort_key(path: Path) -> str:
+    return path.name.casefold()
+
+
+def _snapshot_sort_key(item: dict[str, object]) -> tuple[str, str, str]:
+    return str(item["scope"]), str(item["relative_path"]), str(item["node_type"])
 
 
 def _build_filesystem_snapshot(
@@ -320,25 +325,21 @@ def _build_filesystem_snapshot(
         paths[("destination", str(registry))] = registry
 
     snapshots: list[dict[str, object]] = []
-    for (scope, _path_text), path in sorted(paths.items(), key=lambda item: (item[0][0], item[0][1])):
+    for scope, path_text in sorted(paths):
+        path = paths[(scope, path_text)]
         root = source if scope == "source" else destination
         snapshots.extend(_filesystem_snapshot_for_path(path, scope=scope, root=root))
-    return tuple(
-        sorted(
-            snapshots,
-            key=lambda item: (str(item["scope"]), str(item["relative_path"]), str(item["node_type"])),
-        )
-    )
+    return tuple(sorted(snapshots, key=_snapshot_sort_key))
 
 
 def _read_reviewed_plan_digest(path: Path) -> str:
     if path.is_symlink() or (path.exists() and not path.is_file()):
         raise MigrationError(f"reviewed migration plan must be a regular file: {path}")
     try:
-        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        payload = decode_json(path.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise MigrationError(f"reviewed migration plan could not be read: {path}") from exc
-    if not isinstance(payload, Mapping):
+    if not is_string_object_mapping(payload):
         raise MigrationError("reviewed migration plan must contain an object")
     if payload.get("schema_version") != ENTRYPOINT_SCHEMA_VERSION:
         raise MigrationError("reviewed migration plan has an unsupported schema")
@@ -378,9 +379,7 @@ def _workspace_references(inventory: LegacyInventory) -> tuple[str, ...]:
             {
                 entry.path
                 for entry in inventory.entries
-                if entry.exists
-                and entry.safe
-                and entry.category in {CATEGORY_PROJECT, CATEGORY_MEDIA, CATEGORY_OUTPUT}
+                if entry.exists and entry.safe and entry.category in {CATEGORY_PROJECT, CATEGORY_MEDIA, CATEGORY_OUTPUT}
             }
         )
     )
@@ -409,24 +408,31 @@ def _merge_workspace_registry(path: Path, source: Path, references: Sequence[str
         if path.is_symlink() or not path.is_file():
             raise MigrationError(f"legacy workspace registry must be a regular file: {path}")
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload = decode_json(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise MigrationError(f"invalid legacy workspace registry: {path}") from exc
-        if not isinstance(payload, Mapping) or payload.get("schema_version") != 1:
+        if not is_string_object_mapping(payload) or payload.get("schema_version") != 1:
             raise MigrationError(f"unsupported legacy workspace registry schema: {path}")
         entries = payload.get("workspaces")
-        if not isinstance(entries, list):
+        if not is_object_list(entries):
             raise MigrationError(f"legacy workspace registry must contain an array: {path}")
         for entry in entries:
-            if not isinstance(entry, Mapping) or not isinstance(entry.get("path"), str):
+            if not is_string_object_mapping(entry) or not isinstance(entry.get("path"), str):
                 raise MigrationError(f"invalid legacy workspace entry: {path}")
             resources = entry.get("resources", [])
-            if not isinstance(resources, list) or not all(isinstance(item, str) for item in resources):
+            if not is_object_list(resources):
                 raise MigrationError(f"invalid legacy workspace resources: {path}")
-            normalized = str(Path(entry["path"]).expanduser().resolve())
+            normalized_resources: set[str] = set()
+            for item in resources:
+                if not isinstance(item, str):
+                    raise MigrationError(f"invalid legacy workspace resources: {path}")
+                normalized_resources.add(str(Path(item).expanduser().resolve()))
+            entry_path = entry["path"]
+            assert isinstance(entry_path, str)
+            normalized = str(Path(entry_path).expanduser().resolve())
             workspaces[normalized.casefold()] = {
                 "path": normalized,
-                "resources": sorted({str(Path(item).expanduser().resolve()) for item in resources}),
+                "resources": sorted(normalized_resources),
             }
     normalized_source = str(source.resolve())
     workspaces[normalized_source.casefold()] = {
@@ -572,7 +578,23 @@ def apply_installer_migration(
     return result
 
 
-def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
+class InstallerMigrationArguments(argparse.Namespace):
+    source: str
+    destination: str
+    apply: bool = False
+    confirm: bool = False
+    overwrite: bool = False
+    cuda: bool = False
+    nvenc: bool = False
+    skip_runtime_config: bool = False
+    skip_speaker_colors: bool = False
+    skip_workspace_reference: bool = False
+    plan_output: str | None = None
+    plan_input: str | None = None
+    result_output: str | None = None
+
+
+def _parse_args(argv: Sequence[str] | None) -> InstallerMigrationArguments:
     parser = argparse.ArgumentParser(description="Review or apply Installer first-run migration.")
     parser.add_argument("--source", required=True)
     parser.add_argument("--destination", required=True)
@@ -587,7 +609,9 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--plan-output")
     parser.add_argument("--plan-input")
     parser.add_argument("--result-output")
-    return parser.parse_args(argv)
+    args = InstallerMigrationArguments()
+    parser.parse_args(argv, namespace=args)
+    return args
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -625,7 +649,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(result_json, end="")
         return 0
     except (MigrationError, OSError, ValueError) as exc:
-        print(json.dumps({"schema_version": ENTRYPOINT_SCHEMA_VERSION, "error": str(exc)}, ensure_ascii=False))
+        error_payload: dict[str, object] = {"schema_version": ENTRYPOINT_SCHEMA_VERSION, "error": str(exc)}
+        print(json.dumps(error_payload, ensure_ascii=False))
         return 2
 
 

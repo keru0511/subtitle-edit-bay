@@ -61,6 +61,10 @@ Git clone環境では、追跡対象ファイルにローカル変更がある�
 
 ## 手動セットアップ
 
+Linux CI・クラウド開発は `bash scripts/setup_linux.sh` で準備し、
+`source runtime/linux-dev/env.sh` で共通のPython・FFmpeg・Node.jsを使用します。
+バージョン固定と検証手順は [Linux共通環境](runtime/linux-dev/README.md) を参照してください。
+
 Python 3.10とFFmpeg/ffprobeを手動で用意し、プロジェクト専用の `.venv` にWhisperXと字幕レイアウト依存を導入します。
 
 ~~~powershell

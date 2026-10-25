@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import tempfile
-import unittest
 from pathlib import Path
 
 from src.subtitle_export import SubtitleExportError, export_csv, export_srt, export_vtt
+from tests.typed_case import TypedTestCase
 
 
 def _segments() -> list[dict[str, object]]:
@@ -14,7 +14,7 @@ def _segments() -> list[dict[str, object]]:
     ]
 
 
-class SubtitleExportTests(unittest.TestCase):
+class SubtitleExportTests(TypedTestCase):
     def test_srt_and_vtt_sort_and_preserve_text(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             tmp_path = Path(temp_dir)

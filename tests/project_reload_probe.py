@@ -13,14 +13,20 @@ os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 from PySide6.QtCore import QObject, QUrl
 from PySide6.QtQml import QQmlApplicationEngine
 
+from src.data_boundary import is_object_list
 from src.gui import EditBayBackend
+
+
+class _ProbeArgs(argparse.Namespace):
+    project: str = ""
+    result: str = ""
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
     parser.add_argument("--result", required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(namespace=_ProbeArgs())
 
     repository_root = Path(__file__).resolve().parents[1]
     project_path = Path(args.project).resolve()
@@ -34,16 +40,26 @@ def main() -> None:
         engine.load(QUrl.fromLocalFile(str(repository_root / "src" / "ui" / "Main.qml")))
         backend.processEvents()
 
-        root = engine.rootObjects()[0] if engine.rootObjects() else None
+        root_objects: object = engine.rootObjects()
+        if not is_object_list(root_objects):
+            raise RuntimeError("QMLのルート要素を取得できません")
+        root = root_objects[0] if root_objects else None
+        if root is not None and not isinstance(root, QObject):
+            raise RuntimeError("QMLのルート要素がQObjectではありません")
         edit_button = root.findChild(QObject, "editSubtitlesButton") if root else None
+        segments: object = backend.subtitleSegments
+        settings: object = backend.settings
+        edit_button_enabled: object = False
+        if edit_button is not None:
+            edit_button_enabled = edit_button.property("enabled")
         result = {
             "project_loaded": backend.projectLoaded,
             "project_path": backend.projectPath,
             "project_dirty": backend.projectDirty,
-            "segments": backend.subtitleSegments,
-            "settings": backend.settings,
+            "segments": segments,
+            "settings": settings,
             "qml_loaded": root is not None,
-            "edit_button_enabled": bool(edit_button and edit_button.property("enabled")),
+            "edit_button_enabled": bool(edit_button_enabled),
         }
         Path(args.result).write_text(
             json.dumps(result, ensure_ascii=False, indent=2),

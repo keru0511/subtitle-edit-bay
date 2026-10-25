@@ -1,15 +1,36 @@
 from __future__ import annotations
 
 import argparse
-import json
+import io
 import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, TextIO, cast
 
+from .data_boundary import decode_json, is_object_mapping, is_object_sequence
 from .transcription_profile import DEFAULT_VAD_ONSET, DEFAULT_VAD_OFFSET, first_pass_profile
 from .process_utils import hidden_subprocess_kwargs
+
+
+class TranscribeArguments(argparse.Namespace):
+    command: str
+    input: str
+    audio_track: str
+    output: str
+    run: bool
+    output_dir: str
+    model: str
+    device: str
+    compute_type: str
+    diarize: bool
+    min_speakers: int | None
+    max_speakers: int | None
+    language: str
+    vad_onset: float
+    vad_offset: float
+    initial_prompt: str
+    hotword: list[str]
 
 
 def probe_audio_streams(input_path: str) -> list[dict[str, object]]:
@@ -34,8 +55,18 @@ def probe_audio_streams(input_path: str) -> list[dict[str, object]]:
         check=True,
         **hidden_subprocess_kwargs(),
     )
-    payload = json.loads(result.stdout or "{}")
-    return payload.get("streams", [])
+    payload = decode_json(result.stdout or "{}")
+    if not is_object_mapping(payload):
+        raise ValueError("ffprobe result must be an object")
+    streams = payload.get("streams", [])
+    if not is_object_sequence(streams) or isinstance(streams, (str, bytes, bytearray)):
+        raise ValueError("ffprobe streams must be an array")
+    validated_streams: list[dict[str, object]] = []
+    for stream in streams:
+        if not is_object_mapping(stream) or not all(isinstance(key, str) for key in stream):
+            raise ValueError("ffprobe stream must be an object with string keys")
+        validated_streams.append({key: value for key, value in stream.items() if isinstance(key, str)})
+    return validated_streams
 
 
 def build_extract_audio_command(input_path: str, output_path: str, audio_track: str) -> list[str]:
@@ -59,7 +90,9 @@ def build_extract_audio_command(input_path: str, output_path: str, audio_track: 
 
 def validate_hf_token(diarize: bool) -> None:
     if diarize and not os.environ.get("HF_TOKEN", "").strip():
-        raise SystemExit("Diarization requires the HF_TOKEN environment variable. Omit --diarize when it is not needed.")
+        raise SystemExit(
+            "Diarization requires the HF_TOKEN environment variable. Omit --diarize when it is not needed."
+        )
 
 
 def _normalized_hotwords(hotwords: Sequence[str] | str | None) -> list[str]:
@@ -156,7 +189,7 @@ def run_command_with_utf8_log(command: list[str], log_path: str) -> None:
             value for value in (project_root, environment.get("PYTHONPATH", "")) if value
         )
     try:
-        process = subprocess.Popen(
+        process: subprocess.Popen[str] = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -172,12 +205,15 @@ def run_command_with_utf8_log(command: list[str], log_path: str) -> None:
         raise
 
     with path.open("w", encoding="utf-8") as log_file:
-        if process.stdout is not None:
-            for line in process.stdout:
+        stdout = cast(TextIO | None, process.stdout)
+        if stdout is not None:
+            if not isinstance(stdout, io.TextIOBase):
+                raise TypeError("Process output must be a text stream")
+            for line in stdout:
                 print(line, end="", flush=True)
                 log_file.write(line)
                 log_file.flush()
-            process.stdout.close()
+            stdout.close()
         return_code = process.wait()
         if return_code:
             exit_message = f"\nProcess exited with code {return_code}.\n"
@@ -193,7 +229,8 @@ def print_streams(streams: list[dict[str, object]]) -> None:
         return
 
     for order, stream in enumerate(streams):
-        tags = stream.get("tags", {}) or {}
+        raw_tags = stream.get("tags", {}) or {}
+        tags = raw_tags if is_object_mapping(raw_tags) else {}
         stream_spec = f"0:a:{order}"
         details = [
             f"map={stream_spec}",
@@ -232,18 +269,22 @@ def main() -> None:
     run_parser.add_argument("--min-speakers", type=int, help="Minimum speaker count for diarization.")
     run_parser.add_argument("--max-speakers", type=int, help="Maximum speaker count for diarization.")
     run_parser.add_argument("--language", default="ja", help="Language code passed to WhisperX.")
-    run_parser.add_argument("--vad-onset", type=float, default=DEFAULT_VAD_ONSET, help="VAD onset threshold passed to WhisperX.")
-    run_parser.add_argument("--vad-offset", type=float, default=DEFAULT_VAD_OFFSET, help="VAD offset threshold passed to WhisperX.")
+    run_parser.add_argument(
+        "--vad-onset", type=float, default=DEFAULT_VAD_ONSET, help="VAD onset threshold passed to WhisperX."
+    )
+    run_parser.add_argument(
+        "--vad-offset", type=float, default=DEFAULT_VAD_OFFSET, help="VAD offset threshold passed to WhisperX."
+    )
     run_parser.add_argument("--initial-prompt", default="", help="Optional context prompt passed to WhisperX.")
     run_parser.add_argument(
         "--hotword",
         action="append",
-        default=[],
+        default=list[str](),
         help="Optional WhisperX hotword. May be provided multiple times.",
     )
     run_parser.add_argument("--run", action="store_true", help="Execute instead of printing.")
 
-    args = parser.parse_args()
+    args = parser.parse_args(namespace=TranscribeArguments())
 
     if args.command == "probe":
         print_streams(probe_audio_streams(args.input))

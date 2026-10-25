@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -144,6 +145,10 @@ def _create_directory_alias(
                     pass
                 continue
 
+            if sys.platform == "win32":
+                creationflags = subprocess.CREATE_NO_WINDOW
+            else:
+                creationflags = 0
             completed = subprocess.run(
                 [
                     os.environ.get("COMSPEC", "cmd.exe"),
@@ -157,7 +162,7 @@ def _create_directory_alias(
                 check=False,
                 capture_output=True,
                 text=True,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                creationflags=creationflags,
             )
             if completed.returncode == 0:
                 try:

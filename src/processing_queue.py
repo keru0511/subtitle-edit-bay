@@ -8,7 +8,17 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+
+from .data_boundary import (
+    coerce_float,
+    coerce_int,
+    decode_json,
+    is_object_list,
+    is_object_mapping,
+    is_object_sequence,
+    is_string_object_mapping,
+)
 
 
 QUEUE_SCHEMA_VERSION = 1
@@ -30,8 +40,15 @@ class QueueStage:
     output_fingerprint: str = ""
     error: str = ""
 
-    def to_json(self) -> dict[str, Any]:
-        return self.__dict__.copy()
+    def to_json(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "status": self.status,
+            "progress": self.progress,
+            "output_path": self.output_path,
+            "output_fingerprint": self.output_fingerprint,
+            "error": self.error,
+        }
 
 
 @dataclass
@@ -39,13 +56,13 @@ class QueueItem:
     item_id: str
     input_path: str
     project_path: str = ""
-    settings: dict[str, Any] = field(default_factory=dict)
+    settings: dict[str, object] = field(default_factory=dict)
     input_fingerprint: str = ""
     status: str = "pending"
     stages: list[QueueStage] = field(default_factory=list)
     error: str = ""
 
-    def to_json(self) -> dict[str, Any]:
+    def to_json(self) -> dict[str, object]:
         return {
             "item_id": self.item_id,
             "input_path": self.input_path,
@@ -75,7 +92,7 @@ class ProcessingQueue:
         input_path: str | Path,
         *,
         project_path: str | Path = "",
-        settings: Mapping[str, Any] | None = None,
+        settings: Mapping[str, object] | None = None,
         stages: Iterable[str] = ("transcribe", "render"),
     ) -> QueueItem:
         item = QueueItem(
@@ -126,7 +143,11 @@ class ProcessingQueue:
         stale: list[QueueItem] = []
         for item in self.items:
             current = (current_fingerprints or {}).get(item.item_id, fingerprint_path(item.input_path))
-            if item.input_fingerprint and current != item.input_fingerprint and item.status not in {"running", "canceled"}:
+            if (
+                item.input_fingerprint
+                and current != item.input_fingerprint
+                and item.status not in {"running", "canceled"}
+            ):
                 item.status = "stale"
                 stale.append(item)
         if stale:
@@ -229,11 +250,18 @@ class ProcessingQueue:
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        handle = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.path.parent, prefix="queue-", suffix=".tmp", delete=False)
+        handle = tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=self.path.parent, prefix="queue-", suffix=".tmp", delete=False
+        )
         temp_path = Path(handle.name)
         try:
             with handle:
-                json.dump({"schema_version": QUEUE_SCHEMA_VERSION, "max_concurrency": self.max_concurrency, "items": [item.to_json() for item in self.items]}, handle, ensure_ascii=False, indent=2)
+                payload: dict[str, object] = {
+                    "schema_version": QUEUE_SCHEMA_VERSION,
+                    "max_concurrency": self.max_concurrency,
+                    "items": [item.to_json() for item in self.items],
+                }
+                json.dump(payload, handle, ensure_ascii=False, indent=2)
             os.replace(temp_path, self.path)
         except Exception:
             temp_path.unlink(missing_ok=True)
@@ -242,23 +270,42 @@ class ProcessingQueue:
     def load(self) -> None:
         if not self.path.is_file():
             return
-        payload = json.loads(self.path.read_text(encoding="utf-8"))
-        if int(payload.get("schema_version", 0)) != QUEUE_SCHEMA_VERSION:
+        payload = _queue_mapping(decode_json(self.path.read_text(encoding="utf-8")))
+        if coerce_int(payload.get("schema_version", 0)) != QUEUE_SCHEMA_VERSION:
             raise ProcessingQueueError("unsupported queue schema")
         self.max_concurrency = 1
-        self.items = [
-            QueueItem(
-                item_id=str(item["item_id"]),
-                input_path=str(item.get("input_path", "")),
-                project_path=str(item.get("project_path", "")),
-                settings=dict(item.get("settings", {})),
-                input_fingerprint=str(item.get("input_fingerprint", "")),
-                status=str(item.get("status", "pending")),
-                stages=[QueueStage(**stage) for stage in item.get("stages", [])],
-                error=str(item.get("error", "")),
+        items: list[QueueItem] = []
+        for raw_item in _queue_list(payload.get("items", [])):
+            item = _queue_mapping(raw_item)
+            settings = _queue_mapping(item.get("settings", {}))
+            stages: list[QueueStage] = []
+            for raw_stage in _queue_list(item.get("stages", [])):
+                stage = _queue_mapping(raw_stage)
+                if set(stage) - {"name", "status", "progress", "output_path", "output_fingerprint", "error"}:
+                    raise ProcessingQueueError("unsupported queue stage fields")
+                stages.append(
+                    QueueStage(
+                        name=str(stage["name"]),
+                        status=str(stage.get("status", "pending")),
+                        progress=coerce_float(stage.get("progress", 0.0)),
+                        output_path=str(stage.get("output_path", "")),
+                        output_fingerprint=str(stage.get("output_fingerprint", "")),
+                        error=str(stage.get("error", "")),
+                    )
+                )
+            items.append(
+                QueueItem(
+                    item_id=str(item["item_id"]),
+                    input_path=str(item.get("input_path", "")),
+                    project_path=str(item.get("project_path", "")),
+                    settings=dict(settings),
+                    input_fingerprint=str(item.get("input_fingerprint", "")),
+                    status=str(item.get("status", "pending")),
+                    stages=stages,
+                    error=str(item.get("error", "")),
+                )
             )
-            for item in payload.get("items", [])
-        ]
+        self.items = items
 
 
 def fingerprint_path(path: str | Path) -> str:
@@ -269,14 +316,32 @@ def fingerprint_path(path: str | Path) -> str:
     return hashlib.sha256(f"{candidate.resolve()}:{stat.st_size}:{stat.st_mtime_ns}".encode()).hexdigest()
 
 
-def _safe_settings(settings: Mapping[str, Any]) -> dict[str, Any]:
-    sanitized = _sanitize_setting_value(settings)
-    return dict(sanitized)
+def _queue_mapping(value: object) -> Mapping[str, object]:
+    if not is_string_object_mapping(value):
+        raise ProcessingQueueError("queue entry must be an object")
+    return value
 
 
-def _sanitize_setting_value(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        sanitized: dict[str, Any] = {}
+def _queue_list(value: object) -> list[object]:
+    if not is_object_list(value):
+        raise ProcessingQueueError("queue entries must be a list")
+    return value
+
+
+def _safe_settings(settings: Mapping[str, object]) -> dict[str, object]:
+    sanitized: dict[str, object] = {}
+    for key, value in settings.items():
+        key_text = str(key)
+        if any(secret in key_text.casefold() for secret in _SECRET_SETTING_KEY_PARTS):
+            sanitized[key_text] = _REDACTED_SETTING_VALUE
+        else:
+            sanitized[key_text] = _sanitize_setting_value(value)
+    return sanitized
+
+
+def _sanitize_setting_value(value: object) -> object:
+    if is_object_mapping(value):
+        sanitized: dict[str, object] = {}
         for key, nested_value in value.items():
             key_text = str(key)
             if any(secret in key_text.casefold() for secret in _SECRET_SETTING_KEY_PARTS):
@@ -284,6 +349,6 @@ def _sanitize_setting_value(value: Any) -> Any:
             else:
                 sanitized[key_text] = _sanitize_setting_value(nested_value)
         return sanitized
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, (list, tuple)) and is_object_sequence(value):
         return [_sanitize_setting_value(item) for item in value]
     return value

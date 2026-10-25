@@ -6,22 +6,28 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from src.data_boundary import coerce_float, decode_json
 from src.short_video_schema import ShortVideo, ShortVideoClip, ShortVideoTransition
 from src.short_video_timeline import build_short_video_timeline
+from tests.typed_case import TypedTestCase
+from tests.typed_data import entries, object_dict, section
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MOCK_PATH = REPO_ROOT / "docs" / "ui-redesign-mockup.html"
 
 
-class ShortWorkspaceContractTests(unittest.TestCase):
+class ShortWorkspaceContractTests(TypedTestCase):
+    node: str
+
     @classmethod
     def setUpClass(cls) -> None:
-        cls.node = shutil.which("node")
-        if cls.node is None:
+        node = shutil.which("node")
+        if node is None:
             raise unittest.SkipTest("Node.js is required for the HTML mock contract tests")
+        cls.node = node
 
-    def _run_node(self, source: str) -> object:
+    def _run_node_value(self, source: str) -> object:
         result = subprocess.run(
             [self.node, "-e", source],
             cwd=REPO_ROOT,
@@ -32,7 +38,13 @@ class ShortWorkspaceContractTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        return json.loads(result.stdout)
+        return decode_json(result.stdout)
+
+    def _run_node(self, source: str) -> dict[str, object]:
+        return object_dict(self._run_node_value(source))
+
+    def _run_node_list(self, source: str) -> list[dict[str, object]]:
+        return entries({"items": self._run_node_value(source)}, "items")
 
     def test_cut_boundary_maps_output_time_to_next_source_clip(self) -> None:
         payload = self._run_node(
@@ -52,12 +64,12 @@ class ShortWorkspaceContractTests(unittest.TestCase):
             """
         )
 
-        self.assertAlmostEqual(payload["duration"], 5.9)
-        self.assertEqual(payload["before"]["clipId"], 1)
-        self.assertAlmostEqual(payload["before"]["sourceTime"], 3.1)
-        self.assertEqual(payload["boundary"]["clipId"], 2)
-        self.assertAlmostEqual(payload["boundary"]["sourceTime"], 21.5)
-        self.assertEqual(payload["boundary"]["time_basis"], "source")
+        self.assertAlmostEqual(coerce_float(payload["duration"]), 5.9)
+        self.assertEqual(section(payload, "before")["clipId"], 1)
+        self.assertAlmostEqual(coerce_float(section(payload, "before")["sourceTime"]), 3.1)
+        self.assertEqual(section(payload, "boundary")["clipId"], 2)
+        self.assertAlmostEqual(coerce_float(section(payload, "boundary")["sourceTime"]), 21.5)
+        self.assertEqual(section(payload, "boundary")["time_basis"], "source")
 
     def test_crossfade_duration_mapping_and_export_share_one_timeline(self) -> None:
         payload = self._run_node(
@@ -81,12 +93,12 @@ class ShortWorkspaceContractTests(unittest.TestCase):
             """
         )
 
-        self.assertAlmostEqual(payload["duration"], 5.4)
-        self.assertAlmostEqual(payload["overlap"], 0.5)
-        self.assertEqual(payload["incoming"]["clipId"], 2)
-        self.assertAlmostEqual(payload["incoming"]["sourceTime"], 21.5)
-        self.assertAlmostEqual(payload["inverse"]["outputTime"], 2.4)
-        self.assertAlmostEqual(payload["exportDuration"], payload["duration"])
+        self.assertAlmostEqual(coerce_float(payload["duration"]), 5.4)
+        self.assertAlmostEqual(coerce_float(payload["overlap"]), 0.5)
+        self.assertEqual(section(payload, "incoming")["clipId"], 2)
+        self.assertAlmostEqual(coerce_float(section(payload, "incoming")["sourceTime"]), 21.5)
+        self.assertAlmostEqual(coerce_float(section(payload, "inverse")["outputTime"]), 2.4)
+        self.assertAlmostEqual(coerce_float(payload["exportDuration"]), coerce_float(payload["duration"]))
         self.assertEqual(payload["exportBasis"], "source")
 
     def test_mock_duration_matches_product_export_timeline(self) -> None:
@@ -126,11 +138,12 @@ class ShortWorkspaceContractTests(unittest.TestCase):
                     """
                 )
 
-                self.assertAlmostEqual(mock["totalDuration"], product.total_duration)
-                self.assertEqual(len(mock["clips"]), len(product.clips))
-                for mock_clip, product_clip in zip(mock["clips"], product.clips, strict=True):
-                    self.assertAlmostEqual(mock_clip["outputStart"], product_clip.output_start)
-                    self.assertAlmostEqual(mock_clip["overlap"], product_clip.overlap)
+                self.assertAlmostEqual(coerce_float(mock["totalDuration"]), product.total_duration)
+                mock_clips = entries(mock, "clips")
+                self.assertEqual(len(mock_clips), len(product.clips))
+                for mock_clip, product_clip in zip(mock_clips, product.clips, strict=True):
+                    self.assertAlmostEqual(coerce_float(mock_clip["outputStart"]), product_clip.output_start)
+                    self.assertAlmostEqual(coerce_float(mock_clip["overlap"]), product_clip.overlap)
 
     def test_bridge_splits_output_range_and_rejects_implicit_output_clips(self) -> None:
         payload = self._run_node(
@@ -227,10 +240,10 @@ class ShortWorkspaceContractTests(unittest.TestCase):
 
         for action in ("seek", "playback", "click"):
             with self.subTest(action=action):
-                self.assertEqual(payload[action]["activeClipId"], 2)
-                self.assertAlmostEqual(payload[action]["outputTimeSeconds"], 2.4)
-                self.assertAlmostEqual(payload[action]["sourceTimeSeconds"], 21.5)
-        self.assertAlmostEqual(payload["normalSourceTime"], 4.25)
+                self.assertEqual(section(payload, action)["activeClipId"], 2)
+                self.assertAlmostEqual(coerce_float(section(payload, action)["outputTimeSeconds"]), 2.4)
+                self.assertAlmostEqual(coerce_float(section(payload, action)["sourceTimeSeconds"]), 21.5)
+        self.assertAlmostEqual(coerce_float(payload["normalSourceTime"]), 4.25)
 
     def test_mock_meter_playback_end_and_export_share_effective_duration(self) -> None:
         payload = self._run_node(
@@ -289,12 +302,12 @@ class ShortWorkspaceContractTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["meter"], "5.4秒")
-        self.assertAlmostEqual(payload["player"]["outputTimeSeconds"], 0.05)
-        self.assertAlmostEqual(payload["exportPlan"]["durationSeconds"], 5.4)
-        self.assertEqual(payload["exportPlan"]["time_basis"], "source")
+        self.assertAlmostEqual(coerce_float(section(payload, "player")["outputTimeSeconds"]), 0.05)
+        self.assertAlmostEqual(coerce_float(section(payload, "exportPlan")["durationSeconds"]), 5.4)
+        self.assertEqual(section(payload, "exportPlan")["time_basis"], "source")
 
     def test_mock_can_add_source_range_without_subtitles(self) -> None:
-        payload = self._run_node(
+        payload = self._run_node_list(
             """
             const fs = require('fs');
             const vm = require('vm');
@@ -329,8 +342,8 @@ class ShortWorkspaceContractTests(unittest.TestCase):
         )
 
         self.assertEqual(len(payload), 1)
-        self.assertAlmostEqual(payload[0]["startSec"], 5.5)
-        self.assertAlmostEqual(payload[0]["endSec"], 7.25)
+        self.assertAlmostEqual(coerce_float(payload[0]["startSec"]), 5.5)
+        self.assertAlmostEqual(coerce_float(payload[0]["endSec"]), 7.25)
         self.assertEqual(payload[0]["time_basis"], "source")
 
     def test_short_keyboard_delete_does_not_mutate_normal_timeline(self) -> None:

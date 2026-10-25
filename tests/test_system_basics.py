@@ -2,7 +2,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Mapping
 
+from src.data_boundary import is_object_list, is_string_object_mapping
 from src.gui_state import build_gui_render_command, build_gui_transcribe_command
 from src.gui_state_base import build_gui_runtime_config
 from src.runtime_config import DEFAULT_RUNTIME_CONFIG, load_command_runtime_config, load_runtime_config
@@ -16,17 +18,29 @@ from src.subtitle_project import (
     save_project,
     create_project,
 )
+from tests.typed_case import TypedTestCase
 
 
-class SystemBehaviorTests(unittest.TestCase):
+def _mapping(value: object) -> Mapping[str, object]:
+    assert is_string_object_mapping(value)
+    return value
+
+
+def _list(value: object) -> list[object]:
+    assert is_object_list(value)
+    return value
+
+
+class SystemBehaviorTests(TypedTestCase):
     def test_default_runtime_config_resolves_core_transcription_settings(self) -> None:
         config = load_runtime_config(DEFAULT_RUNTIME_CONFIG)
-        shared = config.get("shared", {})
-        self.assertIsInstance(shared, dict)
+        shared = _mapping(config.get("shared"))
         self.assertEqual(shared.get("model"), "large-v3")
         self.assertEqual(shared.get("language"), "ja")
-        self.assertIn(shared.get("device"), {"cuda", "cpu"})
-        self.assertIn(shared.get("compute_type"), {"float16", "int8"})
+        devices: set[str] = {"cuda", "cpu"}
+        compute_types: set[str] = {"float16", "int8"}
+        self.assertIn(shared.get("device"), devices)
+        self.assertIn(shared.get("compute_type"), compute_types)
 
         craig = load_command_runtime_config("craig_pipeline", DEFAULT_RUNTIME_CONFIG)
         self.assertEqual(craig["model"], shared["model"])
@@ -42,7 +56,7 @@ class SystemBehaviorTests(unittest.TestCase):
         self.assertFalse(status.ready)
         self.assertEqual(status.missing(), ["whisperx"])
         self.assertEqual(status.missing(require_whisperx=False), [])
-        self.assertIn("whisperx", status.to_dict()["missing"])
+        self.assertIn("whisperx", _list(status.to_dict()["missing"]))
         self.assertIn("python -m pip install whisperx", format_dependency_error(status))
 
         cuda_status = RuntimeDependencyStatus(ffmpeg=True, ffprobe=True, whisperx=True, cuda=False)
@@ -80,15 +94,17 @@ class SystemBehaviorTests(unittest.TestCase):
         speakers = [{"track_key": "craig:alice", "color": "#FF0000"}]
 
         resolved = build_gui_runtime_config(base_config, settings, speakers)
+        shared = _mapping(resolved["shared"])
+        craig = _mapping(resolved["craig_pipeline"])
 
-        self.assertEqual(resolved["shared"]["model"], "large-v3")
-        self.assertEqual(resolved["shared"]["device"], "cuda")
-        self.assertEqual(resolved["shared"]["compute_type"], "float16")
-        self.assertEqual(resolved["craig_pipeline"]["video_codec"], "libx264")
-        self.assertFalse(resolved["craig_pipeline"]["audio_normalize"])
-        self.assertEqual(resolved["craig_pipeline"]["track_color"], ["craig:alice=#FF0000"])
+        self.assertEqual(shared["model"], "large-v3")
+        self.assertEqual(shared["device"], "cuda")
+        self.assertEqual(shared["compute_type"], "float16")
+        self.assertEqual(craig["video_codec"], "libx264")
+        self.assertFalse(craig["audio_normalize"])
+        self.assertEqual(craig["track_color"], ["craig:alice=#FF0000"])
         for one_shot_key in ("video", "audio_file", "output_dir", "reference_track", "target"):
-            self.assertNotIn(one_shot_key, resolved["craig_pipeline"])
+            self.assertNotIn(one_shot_key, craig)
 
     def test_gui_commands_target_expected_workflow_entrypoints(self) -> None:
         transcribe = build_gui_transcribe_command(
@@ -161,10 +177,12 @@ class SystemBehaviorTests(unittest.TestCase):
             self.assertEqual(derive_ass_path(project_path).name, "recording.edited.ass")
             self.assertEqual(derive_render_path(project_path).name, "recording.edited.subtitled.mp4")
             self.assertEqual(loaded["project_type"], "subtitle-edit-project")
-            self.assertEqual(loaded["video"]["path"], str(video.resolve()))
-            self.assertEqual(transcript["segments"], [loaded["segments"][0]])
-            self.assertEqual(transcript["segments"][0]["text"], "こんにちは")
-            self.assertEqual(transcript["segments"][0]["speaker"], "A")
+            self.assertEqual(_mapping(loaded["video"])["path"], str(video.resolve()))
+            loaded_segments = _list(loaded["segments"])
+            transcript_segments = _list(transcript["segments"])
+            self.assertEqual(transcript_segments, [loaded_segments[0]])
+            self.assertEqual(_mapping(transcript_segments[0])["text"], "こんにちは")
+            self.assertEqual(_mapping(transcript_segments[0])["speaker"], "A")
 
 
 if __name__ == "__main__":

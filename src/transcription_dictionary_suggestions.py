@@ -3,7 +3,7 @@ from __future__ import annotations
 import difflib
 import re
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
+from typing import Iterable, Mapping
 
 from .transcription_dictionary import DictionaryTerm, TranscriptionDictionary
 
@@ -26,7 +26,7 @@ class DictionarySuggestion:
     status: str = "pending"
     extractor_version: str = SUGGESTION_VERSION
 
-    def to_json(self) -> dict[str, Any]:
+    def to_json(self) -> dict[str, object]:
         return {
             "before": self.before,
             "after": self.after,
@@ -42,12 +42,24 @@ class DictionarySuggestion:
         }
 
 
+@dataclass
+class _SuggestionEvidence:
+    contexts: list[str]
+    speaker: str
+    projects: set[str]
+    count: int
+
+
+def _suggestion_sort_key(item: DictionarySuggestion) -> tuple[float, int, str, str]:
+    return -item.confidence, -item.occurrence_count, item.before, item.after
+
+
 def extract_dictionary_suggestions(
-    corrections: Iterable[Mapping[str, Any]],
+    corrections: Iterable[Mapping[str, object]],
     *,
     existing_terms: Iterable[str] = (),
 ) -> list[DictionarySuggestion]:
-    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    grouped: dict[tuple[str, str], _SuggestionEvidence] = {}
     existing = {str(item) for item in existing_terms}
     for correction in corrections:
         original = str(correction.get("original_text", ""))
@@ -63,25 +75,25 @@ def extract_dictionary_suggestions(
         key = (before, after)
         entry = grouped.setdefault(
             key,
-            {
-                "contexts": [],
-                "speaker": str(correction.get("speaker", "")),
-                "projects": set(),
-                "count": 0,
-            },
+            _SuggestionEvidence(
+                contexts=[],
+                speaker=str(correction.get("speaker", "")),
+                projects=set(),
+                count=0,
+            ),
         )
         context = " ".join(str(correction.get(key, "")) for key in ("context_before", "context_after") if correction.get(key))
         if context:
-            entry["contexts"].append(context[:120])
+            entry.contexts.append(context[:120])
         project_id = str(correction.get("project_id", ""))
         if project_id:
-            entry["projects"].add(project_id)
-        entry["count"] += 1
+            entry.projects.add(project_id)
+        entry.count += 1
 
     suggestions: list[DictionarySuggestion] = []
     for (before, after), entry in grouped.items():
-        count = int(entry["count"])
-        project_count = len(entry["projects"])
+        count = entry.count
+        project_count = len(entry.projects)
         duplicate_penalty = 0.15 if after in existing or before in existing else 0.0
         confidence = max(0.0, min(1.0, 0.45 + min(0.35, count * 0.08) + min(0.2, project_count * 0.1) - duplicate_penalty))
         reason = f"{count}回の手修正"
@@ -93,15 +105,15 @@ def extract_dictionary_suggestions(
             DictionarySuggestion(
                 before=before,
                 after=after,
-                context=entry["contexts"][0] if entry["contexts"] else "",
-                speaker=entry["speaker"],
-                project_ids=tuple(sorted(entry["projects"])),
+                context=entry.contexts[0] if entry.contexts else "",
+                speaker=entry.speaker,
+                project_ids=tuple(sorted(entry.projects)),
                 occurrence_count=count,
                 confidence=round(confidence, 4),
                 reason=reason,
             )
         )
-    return sorted(suggestions, key=lambda item: (-item.confidence, -item.occurrence_count, item.before, item.after))
+    return sorted(suggestions, key=_suggestion_sort_key)
 
 
 def apply_dictionary_suggestion(
@@ -141,9 +153,9 @@ def apply_dictionary_suggestion(
 
 
 def _token_replacements(original: str, corrected: str) -> list[tuple[str, str]]:
-    before = _TOKEN_PATTERN.findall(original)
-    after = _TOKEN_PATTERN.findall(corrected)
-    matcher = difflib.SequenceMatcher(a=before, b=after, autojunk=False)
+    before = [match.group(0) for match in _TOKEN_PATTERN.finditer(original)]
+    after = [match.group(0) for match in _TOKEN_PATTERN.finditer(corrected)]
+    matcher = difflib.SequenceMatcher[str](a=before, b=after, autojunk=False)
     replacements: list[tuple[str, str]] = []
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "replace" and i2 - i1 == 1 and j2 - j1 == 1:

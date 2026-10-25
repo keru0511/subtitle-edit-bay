@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import io
 import os
 import shutil
@@ -10,8 +9,10 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
+from src.data_boundary import coerce_float, decode_json, is_string_object_dict, is_string_object_dict_list
 from src.short_video_ass import build_short_video_ass, remap_short_video_segments
 from src.short_video import filter_complex_script_option
 from src.processing_progress import parse_progress_events
@@ -34,9 +35,19 @@ from tests.media_test_helpers import (
     probe_media,
     video_stream,
 )
+from tests.typed_case import TypedTestCase, typed_skip_unless_method
 
 
-class ShortVideoTimelineTests(unittest.TestCase):
+def _section(payload: object, name: str) -> dict[str, object]:
+    if not is_string_object_dict(payload):
+        raise AssertionError("payload must be an object")
+    section = payload.get(name)
+    if not is_string_object_dict(section):
+        raise AssertionError(f"{name} must be an object")
+    return section
+
+
+class ShortVideoTimelineTests(TypedTestCase):
     def test_short_render_events_follow_processing_boundaries_and_use_output_duration(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -57,9 +68,10 @@ class ShortVideoTimelineTests(unittest.TestCase):
             output = root / "source.short.mp4"
             captured = io.StringIO()
 
+            stream_types: set[str] = {"video", "audio"}
             with (
                 patch("src.short_video.probe_media_duration", return_value=7200.0),
-                patch("src.short_video.probe_media_stream_types", return_value={"video", "audio"}),
+                patch("src.short_video.probe_media_stream_types", return_value=stream_types),
                 patch("src.short_video.build_short_video_filter_complex", return_value="[v]format=yuv420p[v_final]"),
                 patch("src.short_video.run_atomic_ffmpeg_export", return_value=output),
                 redirect_stdout(captured),
@@ -135,7 +147,10 @@ class ShortVideoTimelineTests(unittest.TestCase):
         self.assertEqual(timeline.clips[1].output_start, 1.5)
         self.assertEqual(timeline.total_duration, 3.5)
         self.assertEqual([(item["start"], item["end"]) for item in mapped], [(0.25, 1.0), (1.75, 2.5)])
-        self.assertEqual((mapped[0]["words"][0]["start"], mapped[0]["words"][0]["end"]), (0.5, 0.75))
+        words = mapped[0].get("words")
+        if not is_string_object_dict_list(words):
+            self.fail("mapped words must be objects")
+        self.assertEqual((words[0].get("start"), words[0].get("end")), (0.5, 0.75))
 
     def test_build_ass_uses_vertical_resolution_and_scaled_font(self) -> None:
         short_video = ShortVideo(
@@ -209,8 +224,8 @@ class ShortVideoTimelineTests(unittest.TestCase):
                 self.assertIn(f",{expected_font_size},", ass_text)
 
 
-class ShortVideoRenderE2ETests(unittest.TestCase):
-    @unittest.skipUnless(
+class ShortVideoRenderE2ETests(TypedTestCase):
+    @typed_skip_unless_method(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",
     )
@@ -261,7 +276,10 @@ class ShortVideoRenderE2ETests(unittest.TestCase):
             self.assertTrue(audio_streams(media))
             self.assertAlmostEqual(media_duration_seconds(media), 1.6, delta=0.25)
 
-            ass_path = Path(project["render_settings"].get("short_last_ass", root / "source.short.ass"))
+            ass_value = _section(project, "render_settings").get("short_last_ass", root / "source.short.ass")
+            if not isinstance(ass_value, (str, Path)):
+                self.fail("short ASS path must be a path")
+            ass_path = Path(ass_value)
             if not ass_path.is_file():
                 ass_path = root / "source.short.ass"
             self.assertTrue(ass_path.is_file())
@@ -276,7 +294,7 @@ class ShortVideoRenderE2ETests(unittest.TestCase):
                 self.assertTrue(frame.pixels)
                 self.assertGreater(max(frame.pixels), 100)
 
-    @unittest.skipUnless(
+    @typed_skip_unless_method(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "ffmpeg and ffprobe required",
     )
@@ -312,14 +330,14 @@ class ShortVideoRenderE2ETests(unittest.TestCase):
 
             self.assertTrue(output.is_file())
             saved = load_project(project_path)
-            self.assertNotIn("short_last_ass", saved["render_settings"])
+            self.assertNotIn("short_last_ass", _section(saved, "render_settings"))
             media = probe_media(output)
             output_video = video_stream(media)
             self.assertEqual((output_video["width"], output_video["height"]), (180, 320))
             self.assertEqual(output_video["pix_fmt"], "yuv420p")
             self.assertTrue(audio_streams(media))
 
-    @unittest.skipUnless(
+    @typed_skip_unless_method(
         os.name == "nt"
         and os.environ.get("RUN_FFMPEG_SMOKE") == "1"
         and shutil.which("ffmpeg")
@@ -409,20 +427,27 @@ class ShortVideoRenderE2ETests(unittest.TestCase):
                     capture_output=True,
                     text=True,
                 )
-                media = json.loads(probe.stdout)
-                video_stream = next(
-                    item for item in media["streams"] if item["codec_type"] == "video"
-                )
+                media = decode_json(probe.stdout)
+                if not is_string_object_dict(media):
+                    self.fail("ffprobe result must be an object")
+                streams = media.get("streams")
+                if not is_string_object_dict_list(streams):
+                    self.fail("ffprobe streams must be objects")
+                output_stream = next(item for item in streams if item.get("codec_type") == "video")
                 self.assertEqual(
-                    (video_stream["width"], video_stream["height"]), (180, 320)
+                    (output_stream.get("width"), output_stream.get("height")), (180, 320)
                 )
-                self.assertEqual(video_stream["r_frame_rate"], "15/1")
-                self.assertEqual(video_stream["pix_fmt"], "yuv420p")
+                self.assertEqual(output_stream.get("r_frame_rate"), "15/1")
+                self.assertEqual(output_stream.get("pix_fmt"), "yuv420p")
                 self.assertTrue(
-                    any(item["codec_type"] == "audio" for item in media["streams"])
+                    any(item.get("codec_type") == "audio" for item in streams)
                 )
-                self.assertAlmostEqual(float(media["format"]["duration"]), 2.6, delta=0.3)
-                self.assertIn("mp4", media["format"]["format_name"])
+                media_format = _section(media, "format")
+                self.assertAlmostEqual(coerce_float(media_format.get("duration")), 2.6, delta=0.3)
+                format_name = media_format.get("format_name")
+                if not isinstance(format_name, str):
+                    self.fail("ffprobe format_name must be a string")
+                self.assertIn("mp4", format_name)
 
                 audio_bytes = subprocess.run(
                     [
@@ -432,16 +457,19 @@ class ShortVideoRenderE2ETests(unittest.TestCase):
                     check=True,
                     capture_output=True,
                 ).stdout
-                samples = struct.unpack(
+                samples = cast(tuple[int, ...], struct.unpack(
                     f"<{len(audio_bytes) // 2}h", audio_bytes[: len(audio_bytes) // 2 * 2]
-                )
+                ))
                 self.assertTrue(samples)
                 self.assertGreater(max(abs(sample) for sample in samples), 100)
 
                 media_bytes = output.read_bytes()
                 self.assertLess(media_bytes.find(b"moov"), media_bytes.find(b"mdat"))
-                saved_project = json.loads(project_path.read_text(encoding="utf-8"))
-                ass_path = Path(saved_project["render_settings"]["short_last_ass"])
+                saved_project = decode_json(project_path.read_text(encoding="utf-8"))
+                ass_value = _section(saved_project, "render_settings").get("short_last_ass")
+                if not isinstance(ass_value, str):
+                    self.fail("saved short ASS path must be a string")
+                ass_path = Path(ass_value)
                 dialogue_lines = [
                     line for line in ass_path.read_text(encoding="utf-8").splitlines()
                     if line.startswith("Dialogue:")

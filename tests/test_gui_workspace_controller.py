@@ -7,9 +7,10 @@ from src.gui_workspace_controller import (
     SHORT_ARTIFACT_WORKSPACE,
     WorkspaceNavigationController,
 )
+from tests.typed_case import TypedTestCase
 
 
-class WorkspaceNavigationControllerTests(unittest.TestCase):
+class WorkspaceNavigationControllerTests(TypedTestCase):
     def test_round_trip_restores_normal_position_and_keeps_short_position_separate(self) -> None:
         controller = WorkspaceNavigationController()
 

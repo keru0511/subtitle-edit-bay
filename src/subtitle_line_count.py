@@ -8,9 +8,9 @@ from .subtitle_layout.packer import (
     DEFAULT_SUBTITLE_END_PADDING_SECONDS,
     DEFAULT_SUBTITLE_MAX_GAP_SECONDS,
     DEFAULT_SUBTITLE_MIN_DURATION_SECONDS,
-    normalize_text,
-    pack_segment_pages,
-    text_width,
+    normalize_text as normalize_text,
+    pack_segment_pages as pack_segment_pages,
+    text_width as text_width,
 )
 
 from .subtitle_line_count_config import (

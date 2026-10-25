@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from .color_config import load_speaker_color_map
 
@@ -18,10 +17,12 @@ class SourceSelection:
     output_dir: str = ""
     audio_files: tuple[str, ...] = ()
 
-    def to_dict(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["audio_files"] = list(self.audio_files)
-        return payload
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "video": self.video,
+            "output_dir": self.output_dir,
+            "audio_files": list(self.audio_files),
+        }
 
 
 def build_speaker_entries_from_files(
@@ -29,10 +30,12 @@ def build_speaker_entries_from_files(
     color_config_path: str | Path | None = None,
 ) -> list[dict[str, str]]:
     color_map = load_speaker_color_map(color_config_path)
-    supported_files = sorted(
-        (Path(path) for path in audio_files if Path(path).suffix.lower() in AUDIO_EXTENSIONS),
-        key=lambda path: (path.name.casefold(), str(path).casefold()),
-    )
+    supported_files: list[Path] = [Path(path) for path in audio_files if Path(path).suffix.lower() in AUDIO_EXTENSIONS]
+
+    def sort_key(path: Path) -> tuple[str, str]:
+        return path.name.casefold(), str(path).casefold()
+
+    supported_files.sort(key=sort_key)
 
     entries: list[dict[str, str]] = []
     for index, audio_file in enumerate(supported_files):

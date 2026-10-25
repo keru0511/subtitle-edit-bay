@@ -17,6 +17,7 @@ Rectangle {
     readonly property int laneInset: 3
     property bool editable: true
     property bool showSegments: true
+    property bool applyClipFilter: false
     property bool showTrackVolume: false
     property var seekHandler: null
     property var lanes: timelineRoot.speakers
@@ -33,7 +34,22 @@ Rectangle {
         var padding = Math.max(2, timelineFlick.width / pixels * 0.25);
         var viewportStart = Math.max(0, timelineFlick.contentX / pixels - padding);
         var viewportEnd = (timelineFlick.contentX + timelineFlick.width) / pixels + padding;
-        timelineRoot.visibleSegments = timelineRoot.showSegments ? timelineRoot.appBackend.subtitles.visibleSubtitleSegments(viewportStart, viewportEnd) : [];
+        var segments = timelineRoot.showSegments
+            ? timelineRoot.appBackend.subtitles.visibleSubtitleSegments(viewportStart, viewportEnd) : [];
+        var scope = timelineRoot.appBackend.subtitles.subtitleClipSourceWindow;
+        if (timelineRoot.applyClipFilter && scope.active) {
+            var filtered = [];
+            if (scope.hasTranscript) {
+                for (var i = 0; i < segments.length; ++i) {
+                    var segment = segments[i];
+                    if (Number(segment.start) < Number(scope.end)
+                        && Number(segment.end) > Number(scope.start))
+                        filtered.push(segment);
+                }
+            }
+            segments = filtered;
+        }
+        timelineRoot.visibleSegments = segments;
 
         var ticks = [];
         var firstTick = Math.max(0, Math.floor(viewportStart / 10) * 10);
@@ -73,10 +89,14 @@ Rectangle {
     }
 
     onPixelsPerSecondChanged: timelineRoot.refreshViewport()
+    onApplyClipFilterChanged: Qt.callLater(timelineRoot.refreshViewport)
     signal segmentActivated(int index)
     Connections {
         target: timelineRoot.appBackend.subtitles
         function onSegmentsChanged() {
+            Qt.callLater(timelineRoot.refreshViewport);
+        }
+        function onSubtitleClipFilterChanged() {
             Qt.callLater(timelineRoot.refreshViewport);
         }
     }
@@ -270,6 +290,7 @@ Rectangle {
 
                     Rectangle {
                         id: leftHandle
+                        objectName: "timelineCaptionStartHandle"
                         z: 3
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
@@ -281,6 +302,7 @@ Rectangle {
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.SizeHorCursor
+                            preventStealing: true
                             onPressed: function (mouse) {
                                 captionClip.originalX = captionClip.x;
                                 captionClip.originalWidth = captionClip.width;
@@ -300,6 +322,7 @@ Rectangle {
 
                     Rectangle {
                         id: rightHandle
+                        objectName: "timelineCaptionEndHandle"
                         z: 3
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
@@ -311,6 +334,7 @@ Rectangle {
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.SizeHorCursor
+                            preventStealing: true
                             onPressed: function (mouse) {
                                 captionClip.originalWidth = captionClip.width;
                                 captionClip.pointerStart = mapToItem(timelineCanvas, mouse.x, mouse.y).x;

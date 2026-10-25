@@ -6,13 +6,14 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Sequence, TypeGuard
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from src.data_boundary import coerce_float, is_object_dict
 from src.short_video_schema import SHORT_VIDEO_SCHEMA_VERSION
 from src.subtitle_project import create_project, validate_project
 
@@ -29,13 +30,17 @@ SPEAKERS = (
 )
 
 
-def generate_segments(segment_count: int) -> list[dict[str, Any]]:
+def _string_dict(value: object) -> TypeGuard[dict[str, object]]:
+    return is_object_dict(value) and all(isinstance(key, str) for key in value)
+
+
+def generate_segments(segment_count: int) -> list[dict[str, object]]:
     """Create a repeatable, varied subtitle data set without random input."""
 
     if segment_count <= 0:
         raise ValueError("segment_count must be positive")
 
-    segments: list[dict[str, Any]] = []
+    segments: list[dict[str, object]] = []
     for index in range(segment_count):
         start = round(index * 0.72, 3)
         duration = 1.08 + (index % 5) * 0.09
@@ -86,11 +91,11 @@ def build_fixture_project(
     media_path: Path,
     output_dir: Path,
     segment_count: int,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     media_path = media_path.resolve()
     output_dir = output_dir.resolve()
     segments = generate_segments(segment_count)
-    project_duration = float(segments[-1]["end"])
+    project_duration = coerce_float(segments[-1]["end"])
     speakers = [
         {
             "name": name,
@@ -115,7 +120,7 @@ def build_fixture_project(
         }
         for speaker_index, (name, style, color) in enumerate(SPEAKERS)
     ]
-    project = create_project(
+    raw_project: object = create_project(
         video_path=media_path,
         output_dir=output_dir,
         segments=segments,
@@ -132,7 +137,9 @@ def build_fixture_project(
         # while list/timeline scenarios can still navigate the final row.
         duration_seconds=project_duration,
     )
-    project["short_video"] = {
+    if not _string_dict(raw_project):
+        raise ValueError("生成したプロジェクトが辞書ではありません。")
+    raw_project["short_video"] = {
         "schema_version": SHORT_VIDEO_SCHEMA_VERSION,
         "enabled": True,
         "output": {"width": 1080, "height": 1920, "fps": 30},
@@ -144,15 +151,18 @@ def build_fixture_project(
         "clips": [
             {
                 "segment_id": str(segment["id"]),
-                "start": float(segment["start"]),
+                "start": coerce_float(segment["start"]),
                 # The first clip spans the synthetic media so visual-only
                 # changes cannot coincide with a natural playback stop.
-                "end": (DEFAULT_MEDIA_DURATION_SECONDS - 1.0 if index == 0 else float(segment["end"])),
+                "end": (DEFAULT_MEDIA_DURATION_SECONDS - 1.0 if index == 0 else coerce_float(segment["end"])),
             }
             for index, segment in enumerate(segments)
         ],
     }
-    project = validate_project(project)
+    validated_project: object = validate_project(raw_project)
+    if not _string_dict(validated_project):
+        raise ValueError("検証後のプロジェクトが辞書ではありません。")
+    project = validated_project
     project["created_at"] = FIXTURE_TIMESTAMP
     project["updated_at"] = FIXTURE_TIMESTAMP
     return project
@@ -235,7 +245,15 @@ def generate_synthetic_media(
     return path
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+class _FixtureArgs(argparse.Namespace):
+    output_dir: Path = Path(".")
+    segment_counts: list[int] | None = None
+    media_duration_seconds: float = DEFAULT_MEDIA_DURATION_SECONDS
+    project_only: bool = False
+    force_media: bool = False
+
+
+def parse_args(argv: Sequence[str] | None = None) -> _FixtureArgs:
     parser = argparse.ArgumentParser(
         description="Generate licensed-safe media and deterministic large GUI project fixtures.",
     )
@@ -258,8 +276,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Write project JSON without running ffmpeg (the referenced media may not exist).",
     )
     parser.add_argument("--force-media", action="store_true")
-    args = parser.parse_args(argv)
-    args.segment_counts = args.segment_counts or list(DEFAULT_SEGMENT_COUNTS)
+    args = parser.parse_args(argv, namespace=_FixtureArgs())
+    if not args.segment_counts:
+        args.segment_counts = list(DEFAULT_SEGMENT_COUNTS)
     if any(count <= 0 for count in args.segment_counts):
         parser.error("--segment-count must be positive")
     return args
@@ -277,25 +296,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             force=args.force_media,
         )
 
+    segment_counts = args.segment_counts or list(DEFAULT_SEGMENT_COUNTS)
     projects = [
         write_fixture_project(
             output_dir / f"large-{segment_count}.subtitle-project.json",
             media_path=media_path,
             segment_count=segment_count,
         )
-        for segment_count in args.segment_counts
+        for segment_count in segment_counts
     ]
-    print(
-        json.dumps(
-            {
-                "media": str(media_path),
-                "media_exists": media_path.is_file(),
-                "projects": [str(project) for project in projects],
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
+    output_payload: dict[str, object] = {
+        "media": str(media_path),
+        "media_exists": media_path.is_file(),
+        "projects": [str(project) for project in projects],
+    }
+    print(json.dumps(output_payload, ensure_ascii=False, indent=2))
     return 0
 
 

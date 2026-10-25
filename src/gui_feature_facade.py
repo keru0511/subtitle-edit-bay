@@ -6,6 +6,7 @@ from PySide6.QtCore import QObject
 
 if TYPE_CHECKING:
     from .gui import EditBayBackend
+    from .gui_project_editor_controller import ProjectEditorController
 
 
 class FeatureFacade(QObject):
@@ -18,3 +19,16 @@ class FeatureFacade(QObject):
     def __init__(self, backend: EditBayBackend) -> None:
         super().__init__(backend)
         self._backend = backend
+        self._project_editor: ProjectEditorController | None = None
+
+    def bind_project_editor(self, controller: ProjectEditorController) -> None:
+        """プロジェクトの所有者を機能窓口へ直接渡す。"""
+
+        self._project_editor = controller
+
+    @property
+    def project_editor(self) -> ProjectEditorController:
+        controller = self._project_editor
+        if controller is None:
+            raise RuntimeError("プロジェクト編集器の初期化が完了していません")
+        return controller

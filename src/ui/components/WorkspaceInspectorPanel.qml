@@ -39,6 +39,7 @@ Rectangle {
             Button {
                 id: inspectorSettingsTabButton
                 objectName: "inspectorSettingsTabButton"
+                focusPolicy: Qt.TabFocus
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 text: "編集プロパティ"
@@ -61,6 +62,7 @@ Rectangle {
             Button {
                 id: inspectorCodexTabButton
                 objectName: "inspectorCodexTabButton"
+                focusPolicy: Qt.TabFocus
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 text: "AI Codex"

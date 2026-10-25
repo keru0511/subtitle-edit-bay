@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import tempfile
-import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -15,6 +14,7 @@ from src.project_snapshots import (
     sanitize_project,
     _merge_media_references,
 )
+from tests.typed_case import TypedTestCase
 
 
 def _project() -> dict[object, object]:
@@ -33,7 +33,7 @@ def _mapping(value: object) -> dict[object, object]:
     return dict(value)
 
 
-class ProjectSnapshotTests(unittest.TestCase):
+class ProjectSnapshotTests(TypedTestCase):
     def test_snapshot_excludes_media_and_secrets_and_validates_checksum(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

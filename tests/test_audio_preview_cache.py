@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from src.data_boundary import is_object_mapping
 from src.audio_preview_cache import (
     MAX_CACHE_AGE_SECONDS,
     MAX_CACHE_SIZE_BYTES,
@@ -18,9 +19,10 @@ from src.audio_preview_cache import (
     prune_audio_preview_cache,
     prepare_audio_preview_cache,
 )
+from tests.typed_case import TypedTestCase
 
 
-class AudioPreviewCacheTests(unittest.TestCase):
+class AudioPreviewCacheTests(TypedTestCase):
     def _project(self, root: Path) -> dict[str, object]:
         video = root / "capture.mkv"
         video.write_bytes(b"video-source")
@@ -65,7 +67,10 @@ class AudioPreviewCacheTests(unittest.TestCase):
             self.assertTrue(all(entry.output_path.suffix == ".mka" for entry in entries))
 
             original_path = entries[0].output_path
-            video = Path(str(project["video"]["path"]))
+            video_payload = project["video"]
+            if not is_object_mapping(video_payload):
+                self.fail("動画情報はオブジェクトである必要がある")
+            video = Path(str(video_payload["path"]))
             video.write_bytes(b"video-source-changed")
             changed = audio_preview_cache_entries(project, cache_root)
             self.assertNotEqual(changed[0].output_path, original_path)
@@ -87,16 +92,17 @@ class AudioPreviewCacheTests(unittest.TestCase):
                 result = prepare_audio_preview_cache(project, root / "cache")
 
             self.assertEqual(result.errors, ())
-            self.assertEqual(set(result.paths), {
-                "video:0:a:0",
-                "video:0:a:1",
-                "external:speaker",
-            })
+            self.assertEqual(
+                set(result.paths),
+                {
+                    "video:0:a:0",
+                    "video:0:a:1",
+                    "external:speaker",
+                },
+            )
             self.assertTrue(all(Path(path).is_file() for path in result.paths.values()))
             self.assertEqual(len(calls), 2)
-            video_command = next(
-                command for command in calls if "0:a:1" in command
-            )
+            video_command = next(command for command in calls if "0:a:1" in command)
             self.assertIn("0:a:0", video_command)
             self.assertIn("0:a:1", video_command)
             self.assertIn("+genpts", video_command)
@@ -202,4 +208,3 @@ class AudioPreviewCacheTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

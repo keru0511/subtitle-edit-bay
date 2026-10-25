@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import unittest
 from pathlib import Path
+from tests.typed_case import TypedTestCase
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -27,7 +28,7 @@ NO_ALTERNATE_SCREEN_PATTERN = re.compile(
 )
 
 
-class ProductionEntrypointContractTests(unittest.TestCase):
+class ProductionEntrypointContractTests(TypedTestCase):
     def test_main_qml_directly_constructs_the_cutover_root(self) -> None:
         source = ENTRYPOINT_QML.read_text(encoding="utf-8")
 

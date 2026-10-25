@@ -4,9 +4,11 @@ import re
 import shlex
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 import yaml
+
+from src.data_boundary import is_object_dict, is_object_list, is_object_mapping, is_object_sequence
 
 
 class WorkflowContractError(ValueError):
@@ -31,49 +33,53 @@ GitHubActionsLoader.add_implicit_resolver(
 )
 
 
-def load_workflow(path: Path) -> dict[str, Any]:
+def load_workflow(path: Path) -> dict[str, object]:
     try:
         payload = yaml.load(path.read_text(encoding="utf-8"), Loader=GitHubActionsLoader)
     except (OSError, yaml.YAMLError) as exc:
         raise WorkflowContractError(f"could not load workflow {path}: {exc}") from exc
-    if not isinstance(payload, dict):
+    if not is_object_dict(payload):
         raise WorkflowContractError(f"workflow root must be a mapping: {path}")
-    return payload
+    if not all(isinstance(key, str) for key in payload):
+        raise WorkflowContractError(f"workflow root keys must be strings: {path}")
+    return cast(dict[str, object], payload)
 
 
-def _workflow_jobs(workflow: Mapping[str, Any]) -> Mapping[str, Any]:
+def _workflow_jobs(workflow: Mapping[str, object]) -> Mapping[str, object]:
     jobs = workflow.get("jobs")
-    if not isinstance(jobs, Mapping) or not jobs:
+    if not is_object_mapping(jobs) or not jobs:
         raise WorkflowContractError("workflow jobs must be a non-empty mapping")
     if not all(isinstance(job_id, str) for job_id in jobs):
         raise WorkflowContractError("workflow job IDs must be strings")
-    return jobs
+    return cast(Mapping[str, object], jobs)
 
 
-def _job_mapping(jobs: Mapping[str, Any], job_id: str) -> Mapping[str, Any]:
+def _job_mapping(jobs: Mapping[str, object], job_id: str) -> Mapping[str, object]:
     job = jobs.get(job_id)
-    if not isinstance(job, Mapping):
+    if not is_object_mapping(job):
         raise WorkflowContractError(f"job must be a mapping: {job_id}")
-    return job
+    if not all(isinstance(key, str) for key in job):
+        raise WorkflowContractError(f"job keys must be strings: {job_id}")
+    return cast(Mapping[str, object], job)
 
 
-def _job_needs(job_id: str, job: Mapping[str, Any]) -> tuple[str, ...]:
+def _job_needs(job_id: str, job: Mapping[str, object]) -> tuple[str, ...]:
     raw_needs = job.get("needs")
     if raw_needs is None:
         return ()
     if isinstance(raw_needs, str):
         return (raw_needs,)
-    if not isinstance(raw_needs, Sequence) or isinstance(raw_needs, (str, bytes)):
+    if not is_object_sequence(raw_needs) or isinstance(raw_needs, (str, bytes)):
         raise WorkflowContractError(f"job needs must be a string or list: {job_id}")
-    needs = tuple(raw_needs)
-    if not all(isinstance(dependency, str) for dependency in needs):
+    if not all(isinstance(dependency, str) for dependency in raw_needs):
         raise WorkflowContractError(f"job needs entries must be strings: {job_id}")
+    needs = tuple(dependency for dependency in raw_needs if isinstance(dependency, str))
     if len(needs) != len(set(needs)):
         raise WorkflowContractError(f"job has duplicate dependencies: {job_id}")
     return needs
 
 
-def build_job_graph(workflow: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
+def build_job_graph(workflow: Mapping[str, object]) -> dict[str, tuple[str, ...]]:
     jobs = _workflow_jobs(workflow)
     graph = {job_id: _job_needs(job_id, _job_mapping(jobs, job_id)) for job_id in jobs}
     for job_id, dependencies in graph.items():
@@ -125,17 +131,17 @@ def _expression_body(value: str) -> str:
     expression = value.strip()
     wrapped = re.fullmatch(r"\$\{\{\s*(.*?)\s*\}\}", expression, re.DOTALL)
     if wrapped:
-        return wrapped.group(1).strip()
+        return cast(str, wrapped.group(1)).strip()
     return expression
 
 
-def _continue_on_error_enabled(value: Any) -> bool:
+def _continue_on_error_enabled(value: object) -> bool:
     if value is None or value is False:
         return False
     return not (isinstance(value, str) and _expression_body(value).lower() == "false")
 
 
-def _condition_requires_success(item: Mapping[str, Any]) -> bool:
+def _condition_requires_success(item: Mapping[str, object]) -> bool:
     if "if" not in item:
         return True
     condition = item["if"]
@@ -146,7 +152,7 @@ def _condition_requires_success(item: Mapping[str, Any]) -> bool:
 
 
 def validate_publish_gate(
-    workflow: Mapping[str, Any],
+    workflow: Mapping[str, object],
     *,
     publish_job: str,
     required_gates: Sequence[str],
@@ -176,7 +182,7 @@ def validate_publish_gate(
 
 
 def _permission_summary(
-    value: Any,
+    value: object,
     *,
     location: str,
 ) -> tuple[str | None, set[str]]:
@@ -188,7 +194,7 @@ def _permission_summary(
         if value == "write-all":
             return "write", {"*"}
         raise WorkflowContractError(f"invalid permissions value at {location}: {value}")
-    if not isinstance(value, Mapping):
+    if not is_object_mapping(value):
         raise WorkflowContractError(f"permissions must be a mapping at {location}")
     invalid = [
         f"{scope}={access}"
@@ -198,12 +204,14 @@ def _permission_summary(
     if invalid:
         raise WorkflowContractError(f"invalid permission entries at {location}: {', '.join(invalid)}")
     contents = value.get("contents", "none")
-    write_scopes = {scope for scope, access in value.items() if access == "write"}
+    if not isinstance(contents, str):
+        raise WorkflowContractError(f"invalid contents permission at {location}")
+    write_scopes = {scope for scope, access in value.items() if isinstance(scope, str) and access == "write"}
     return contents, write_scopes
 
 
 def validate_publish_permissions(
-    workflow: Mapping[str, Any],
+    workflow: Mapping[str, object],
     *,
     publish_job: str,
 ) -> None:
@@ -253,22 +261,27 @@ def validate_publish_permissions(
 
 
 def job_steps(
-    workflow: Mapping[str, Any],
+    workflow: Mapping[str, object],
     job_id: str,
-) -> list[Mapping[str, Any]]:
+) -> list[Mapping[str, object]]:
     jobs = _workflow_jobs(workflow)
     job = _job_mapping(jobs, job_id)
     raw_steps = job.get("steps")
-    if not isinstance(raw_steps, list) or not all(isinstance(step, Mapping) for step in raw_steps):
+    if not is_object_list(raw_steps):
         raise WorkflowContractError(f"job steps must be a list of mappings: {job_id}")
-    return list(raw_steps)
+    steps: list[Mapping[str, object]] = []
+    for step in raw_steps:
+        if not is_object_mapping(step) or not all(isinstance(key, str) for key in step):
+            raise WorkflowContractError(f"job steps must be a list of string-keyed mappings: {job_id}")
+        steps.append(cast(Mapping[str, object], step))
+    return steps
 
 
 def step_by_id(
-    workflow: Mapping[str, Any],
+    workflow: Mapping[str, object],
     job_id: str,
     step_id: str,
-) -> Mapping[str, Any]:
+) -> Mapping[str, object]:
     matches = [step for step in job_steps(workflow, job_id) if step.get("id") == step_id]
     if len(matches) != 1:
         raise WorkflowContractError(f"job {job_id} must contain exactly one step with id {step_id}")
@@ -276,7 +289,7 @@ def step_by_id(
 
 
 def validate_step_command(
-    workflow: Mapping[str, Any],
+    workflow: Mapping[str, object],
     job_id: str,
     step_id: str,
     *,
@@ -300,7 +313,7 @@ def validate_step_command(
 
 
 def validate_step_order(
-    workflow: Mapping[str, Any],
+    workflow: Mapping[str, object],
     job_id: str,
     required_step_ids: Sequence[str],
     *,

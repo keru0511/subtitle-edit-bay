@@ -6,14 +6,16 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+from src.data_boundary import is_object_list, is_object_mapping
 from src.subtitle_project import SubtitleProjectError, create_project, load_project, save_project
 from src.video_timeline import (
     VideoTimelineError,
     timeline_from_project,
 )
+from tests.typed_case import TypedTestCase
 
 
-class VideoTimelineTests(unittest.TestCase):
+class VideoTimelineTests(TypedTestCase):
     def test_unknown_media_duration_does_not_use_last_subtitle_as_video_end(self) -> None:
         project = create_project(
             video_path="source.mp4",
@@ -66,13 +68,21 @@ class VideoTimelineTests(unittest.TestCase):
 
             loaded = load_project(path)
 
-            self.assertEqual(loaded["timeline"]["cuts"][0]["id"], "saved-cut")
+            timeline_data = loaded["timeline"]
+            assert is_object_mapping(timeline_data)
+            cuts = timeline_data["cuts"]
+            assert is_object_list(cuts)
+            first_cut = cuts[0]
+            assert is_object_mapping(first_cut)
+            self.assertEqual(first_cut["id"], "saved-cut")
             legacy = dict(loaded)
             legacy.pop("timeline")
             legacy_path = root / "legacy.json"
             legacy_path.write_text("{}", encoding="utf-8")
             save_project(legacy_path, legacy)
-            self.assertEqual(load_project(legacy_path)["timeline"]["cuts"], [])
+            legacy_timeline = load_project(legacy_path)["timeline"]
+            assert is_object_mapping(legacy_timeline)
+            self.assertEqual(legacy_timeline["cuts"], [])
 
 
 if __name__ == "__main__":

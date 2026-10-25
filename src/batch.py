@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
 
 from .transcription_profile import DEFAULT_VAD_ONSET, DEFAULT_VAD_OFFSET
@@ -9,7 +10,17 @@ from .assemble_video import assemble_video, optional_clip, probe_media_duration
 from .burn_subs import run_ffmpeg_burn
 from .pipeline import run_media_to_merged_ass
 from .render_ass import parse_track_color_args
-from .runtime_config import load_command_runtime_config, resolve_bool_option, resolve_list_option, resolve_option
+from .runtime_config import (
+    load_command_runtime_config,
+    resolve_bool_option,
+    resolve_integer_option,
+    resolve_list_option,
+    resolve_number_option,
+    resolve_required_integer_option,
+    resolve_required_number_option,
+    resolve_required_string_option,
+    resolve_string_option,
+)
 from .video_encoding import DEFAULT_NVENC_CQ, DEFAULT_X264_CRF
 
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".mov", ".webm"}
@@ -72,7 +83,7 @@ def process_video(
     diarize_tracks: set[str],
     min_speakers: int | None,
     max_speakers: int | None,
-    language: str,
+    language: str | None,
     vad_onset: float | None,
     vad_offset: float | None,
     op_file: str | None,
@@ -143,6 +154,40 @@ def process_video(
     )
 
 
+@dataclass
+class _BatchArgs(argparse.Namespace):
+    config: str | None = None
+    input_dir: str | None = None
+    output_dir: str | None = None
+    audio_track: list[str] | None = None
+    model: str | None = None
+    device: str | None = None
+    compute_type: str | None = None
+    width: int | None = None
+    height: int | None = None
+    diarize_track: list[str] | None = None
+    min_speakers: int | None = None
+    max_speakers: int | None = None
+    language: str | None = None
+    vad_onset: float | None = None
+    vad_offset: float | None = None
+    track_color: list[str] | None = None
+    subtitle_font_size: int | None = None
+    op_file: str | None = None
+    ed_file: str | None = None
+    video_codec: str | None = None
+    audio_codec: str | None = None
+    output_audio_track: str | None = None
+    nvenc_preset: str | None = None
+    nvenc_cq: int | None = None
+    x264_crf: int | None = None
+    audio_normalize: bool | None = None
+    subtitle_max_gap_seconds: float | None = None
+    subtitle_end_padding_seconds: float | None = None
+    subtitle_min_duration_seconds: float | None = None
+    run: bool | None = None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Batch process videos from video_import to video_export.")
     parser.add_argument("--config", help="Path to runtime JSON config.")
@@ -175,37 +220,37 @@ def main() -> None:
     parser.add_argument("--subtitle-end-padding-seconds", type=float, default=None, help="Extra time to keep a subtitle after the last word ends.")
     parser.add_argument("--subtitle-min-duration-seconds", type=float, default=None, help="Minimum subtitle duration after end trimming.")
     parser.add_argument("--run", action="store_true", default=None, help="Execute processing instead of printing targets.")
-    args = parser.parse_args()
+    args = parser.parse_args(namespace=_BatchArgs())
 
     config = load_command_runtime_config("batch", args.config)
-    input_dir_value = resolve_option(args.input_dir, config, "input_dir", DEFAULT_INPUT_DIR)
-    output_dir_value = resolve_option(args.output_dir, config, "output_dir", DEFAULT_OUTPUT_DIR)
+    input_dir_value = resolve_required_string_option(args.input_dir, config, "input_dir", DEFAULT_INPUT_DIR)
+    output_dir_value = resolve_required_string_option(args.output_dir, config, "output_dir", DEFAULT_OUTPUT_DIR)
     audio_tracks = resolve_list_option(args.audio_track, config, "audio_track", DEFAULT_AUDIO_TRACKS)
-    model = resolve_option(args.model, config, "model", DEFAULT_MODEL)
-    device = resolve_option(args.device, config, "device", DEFAULT_DEVICE)
-    compute_type = resolve_option(args.compute_type, config, "compute_type", DEFAULT_COMPUTE_TYPE)
-    width = int(resolve_option(args.width, config, "width", DEFAULT_WIDTH))
-    height = int(resolve_option(args.height, config, "height", DEFAULT_HEIGHT))
+    model = resolve_required_string_option(args.model, config, "model", DEFAULT_MODEL)
+    device = resolve_required_string_option(args.device, config, "device", DEFAULT_DEVICE)
+    compute_type = resolve_required_string_option(args.compute_type, config, "compute_type", DEFAULT_COMPUTE_TYPE)
+    width = resolve_required_integer_option(args.width, config, "width", DEFAULT_WIDTH)
+    height = resolve_required_integer_option(args.height, config, "height", DEFAULT_HEIGHT)
     diarize_tracks = set(resolve_list_option(args.diarize_track, config, "diarize_track", []))
-    min_speakers = resolve_option(args.min_speakers, config, "min_speakers", DEFAULT_MIN_SPEAKERS)
-    max_speakers = resolve_option(args.max_speakers, config, "max_speakers", DEFAULT_MAX_SPEAKERS)
-    language = resolve_option(args.language, config, "language", DEFAULT_LANGUAGE)
-    vad_onset = resolve_option(args.vad_onset, config, "vad_onset", DEFAULT_VAD_ONSET)
-    vad_offset = resolve_option(args.vad_offset, config, "vad_offset", DEFAULT_VAD_OFFSET)
+    min_speakers = resolve_integer_option(args.min_speakers, config, "min_speakers", DEFAULT_MIN_SPEAKERS)
+    max_speakers = resolve_integer_option(args.max_speakers, config, "max_speakers", DEFAULT_MAX_SPEAKERS)
+    language = resolve_string_option(args.language, config, "language", DEFAULT_LANGUAGE)
+    vad_onset = resolve_number_option(args.vad_onset, config, "vad_onset", DEFAULT_VAD_ONSET)
+    vad_offset = resolve_number_option(args.vad_offset, config, "vad_offset", DEFAULT_VAD_OFFSET)
     track_color_map = parse_track_color_args(resolve_list_option(args.track_color, config, "track_color", []))
-    subtitle_font_size = int(resolve_option(args.subtitle_font_size, config, "subtitle_font_size", DEFAULT_SUBTITLE_FONT_SIZE))
-    op_file = resolve_option(args.op_file, config, "op_file", DEFAULT_OP_FILE)
-    ed_file = resolve_option(args.ed_file, config, "ed_file", DEFAULT_ED_FILE)
-    video_codec = resolve_option(args.video_codec, config, "video_codec", DEFAULT_VIDEO_CODEC)
-    audio_codec = resolve_option(args.audio_codec, config, "audio_codec", DEFAULT_AUDIO_CODEC)
-    output_audio_track = resolve_option(args.output_audio_track, config, "output_audio_track", DEFAULT_OUTPUT_AUDIO_TRACK)
-    nvenc_preset = resolve_option(args.nvenc_preset, config, "nvenc_preset", DEFAULT_NVENC_PRESET)
-    nvenc_cq = int(resolve_option(args.nvenc_cq, config, "nvenc_cq", DEFAULT_NVENC_CQ))
-    x264_crf = int(resolve_option(args.x264_crf, config, "x264_crf", DEFAULT_X264_CRF))
+    subtitle_font_size = resolve_required_integer_option(args.subtitle_font_size, config, "subtitle_font_size", DEFAULT_SUBTITLE_FONT_SIZE)
+    op_file = resolve_string_option(args.op_file, config, "op_file", DEFAULT_OP_FILE)
+    ed_file = resolve_string_option(args.ed_file, config, "ed_file", DEFAULT_ED_FILE)
+    video_codec = resolve_required_string_option(args.video_codec, config, "video_codec", DEFAULT_VIDEO_CODEC)
+    audio_codec = resolve_required_string_option(args.audio_codec, config, "audio_codec", DEFAULT_AUDIO_CODEC)
+    output_audio_track = resolve_required_string_option(args.output_audio_track, config, "output_audio_track", DEFAULT_OUTPUT_AUDIO_TRACK)
+    nvenc_preset = resolve_required_string_option(args.nvenc_preset, config, "nvenc_preset", DEFAULT_NVENC_PRESET)
+    nvenc_cq = resolve_required_integer_option(args.nvenc_cq, config, "nvenc_cq", DEFAULT_NVENC_CQ)
+    x264_crf = resolve_required_integer_option(args.x264_crf, config, "x264_crf", DEFAULT_X264_CRF)
     audio_normalize = resolve_bool_option(args.audio_normalize, config, "audio_normalize", True)
-    subtitle_max_gap_seconds = float(resolve_option(args.subtitle_max_gap_seconds, config, "subtitle_max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS))
-    subtitle_end_padding_seconds = float(resolve_option(args.subtitle_end_padding_seconds, config, "subtitle_end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS))
-    subtitle_min_duration_seconds = float(resolve_option(args.subtitle_min_duration_seconds, config, "subtitle_min_duration_seconds", DEFAULT_SUBTITLE_MIN_DURATION_SECONDS))
+    subtitle_max_gap_seconds = resolve_required_number_option(args.subtitle_max_gap_seconds, config, "subtitle_max_gap_seconds", DEFAULT_SUBTITLE_MAX_GAP_SECONDS)
+    subtitle_end_padding_seconds = resolve_required_number_option(args.subtitle_end_padding_seconds, config, "subtitle_end_padding_seconds", DEFAULT_SUBTITLE_END_PADDING_SECONDS)
+    subtitle_min_duration_seconds = resolve_required_number_option(args.subtitle_min_duration_seconds, config, "subtitle_min_duration_seconds", DEFAULT_SUBTITLE_MIN_DURATION_SECONDS)
     run = resolve_bool_option(args.run, config, "run", False)
 
     input_dir = Path(input_dir_value)

@@ -5,8 +5,15 @@ import hashlib
 import json
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, cast
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from src.data_boundary import decode_json, is_object_list, is_object_mapping
 
 
 INSTALLER_NAME = "SubtitleEditBay-Setup.exe"
@@ -40,11 +47,21 @@ class ReleaseContractError(ValueError):
     """Raised when release inputs or artifacts are inconsistent."""
 
 
+@dataclass
+class ReleaseContractArgs(argparse.Namespace):
+    command: str = ""
+    release_version: str = ""
+    version_file: Path = Path("VERSION")
+    directory: Path = Path(".")
+    expected_version: str = ""
+    expected_source_sha: str = ""
+
+
 def release_version_from_tag(tag: str) -> str:
     match = TAG_PATTERN.fullmatch(tag.strip())
     if not match:
         raise ReleaseContractError(f"release tag must use vX.Y.Z without leading zeroes: {tag}")
-    return match.group(1)
+    return cast(str, match.group(1))
 
 
 def validate_source_version(release_version: str, version_file: Path) -> str:
@@ -80,17 +97,17 @@ def _read_checksum(path: Path) -> str:
     match = CHECKSUM_PATTERN.fullmatch(checksum_text)
     if not match:
         raise ReleaseContractError(f"checksum must contain SHA-256 and {INSTALLER_NAME}: {path}")
-    return match.group(1).lower()
+    return cast(str, match.group(1)).lower()
 
 
 def _read_manifest(path: Path) -> dict[str, object]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        payload = decode_json(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ReleaseContractError(f"could not read manifest {path}: {exc}") from exc
-    if not isinstance(payload, dict):
+    if not is_object_mapping(payload) or any(not isinstance(key, str) for key in payload):
         raise ReleaseContractError(f"release manifest must be an object: {path}")
-    return payload
+    return {str(key): value for key, value in payload.items()}
 
 
 def verify_release_artifacts(
@@ -161,23 +178,23 @@ def verify_release_artifacts(
             )
 
     required_files = manifest.get("required_files")
-    if not isinstance(required_files, list) or not all(isinstance(item, str) for item in required_files):
+    if not is_object_list(required_files) or not all(isinstance(item, str) for item in required_files):
         raise ReleaseContractError("manifest required_files must be a list of strings")
-    missing_required_files = sorted(REQUIRED_INSTALLED_FILES - set(required_files))
+    required_names = {item for item in required_files if isinstance(item, str)}
+    missing_required_files = sorted(REQUIRED_INSTALLED_FILES - required_names)
     if missing_required_files:
         raise ReleaseContractError("manifest required_files is incomplete: " + ", ".join(missing_required_files))
     runtime_contract = manifest.get("runtime_contract")
     runtime_hash_names = ("contract_sha256", "cpu_lock_sha256", "cu128_lock_sha256")
-    if not isinstance(runtime_contract, dict) or any(
-        not isinstance(runtime_contract.get(name), str)
-        or not re.fullmatch(r"[0-9a-f]{64}", runtime_contract[name])
+    if not is_object_mapping(runtime_contract) or any(
+        not isinstance(value := runtime_contract.get(name), str) or not re.fullmatch(r"[0-9a-f]{64}", value)
         for name in runtime_hash_names
     ):
         raise ReleaseContractError("manifest runtime_contract hashes are incomplete")
     return actual_digest
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> ReleaseContractArgs:
     parser = argparse.ArgumentParser(description="Validate release source metadata and generated installer artifacts.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -195,7 +212,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     artifacts_parser.add_argument("--directory", type=Path, required=True)
     artifacts_parser.add_argument("--expected-version", required=True)
     artifacts_parser.add_argument("--expected-source-sha", default="")
-    return parser.parse_args(argv)
+    return parser.parse_args(argv, namespace=ReleaseContractArgs())
 
 
 def main(argv: Sequence[str] | None = None) -> int:

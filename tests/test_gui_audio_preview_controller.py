@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from concurrent.futures import Future
 import tempfile
+from threading import Event
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Mapping
 from unittest.mock import patch
 
 from src.audio_preview_cache import (
@@ -12,10 +13,12 @@ from src.audio_preview_cache import (
     audio_preview_cache_entries,
 )
 from src.gui_audio_preview_controller import AudioPreviewController
+from src.data_boundary import is_object_list, is_string_object_dict
+from tests.typed_case import TypedTestCase
 
 
-class AudioPreviewControllerTests(unittest.TestCase):
-    def _project(self, root: Path) -> dict[str, Any]:
+class AudioPreviewControllerTests(TypedTestCase):
+    def _project(self, root: Path) -> dict[str, object]:
         video = root / "capture.mkv"
         external = root / "speaker.aac"
         video.write_bytes(b"video-source")
@@ -48,7 +51,7 @@ class AudioPreviewControllerTests(unittest.TestCase):
         }
 
     @staticmethod
-    def _write_cache(project: dict[str, Any], cache_root: Path) -> dict[str, str]:
+    def _write_cache(project: Mapping[str, object], cache_root: Path) -> dict[str, str]:
         entries = audio_preview_cache_entries(project, cache_root)
         paths: dict[str, str] = {}
         for entry in entries:
@@ -78,7 +81,13 @@ class AudioPreviewControllerTests(unittest.TestCase):
                 ["video:0:a:0"],
             )
 
-            project["audio_mix"]["channels"][1]["enabled"] = True
+            audio_mix = project["audio_mix"]
+            assert is_string_object_dict(audio_mix)
+            channel_entries = audio_mix["channels"]
+            assert is_object_list(channel_entries)
+            external_channel = channel_entries[1]
+            assert is_string_object_dict(external_channel)
+            external_channel["enabled"] = True
             controller.notify_preview(structure_changed=True)
             self.assertEqual(
                 controller.preview_gains,
@@ -114,7 +123,7 @@ class AudioPreviewControllerTests(unittest.TestCase):
             calls: list[Path] = []
 
             def prepare(
-                _project: dict[str, Any],
+                _project: Mapping[str, object],
                 cache_root: Path,
                 *,
                 protected_paths: list[Path],
@@ -175,6 +184,53 @@ class AudioPreviewControllerTests(unittest.TestCase):
             self.assertEqual(cleared, [root / "cache"])
             self.assertEqual(controller.generation, generation + 1)
             self.assertEqual(controller.cache_paths, {})
+
+    def test_rebuild_during_active_generation_discards_old_generation_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = self._project(root)
+            cache_root = root / "cache"
+            entry = audio_preview_cache_entries(project, cache_root)[0]
+            started = Event()
+            release_old = Event()
+            generation = 0
+
+            def prepare(
+                _project: Mapping[str, object],
+                _cache_root: Path,
+                *,
+                protected_paths: list[Path],
+            ) -> AudioPreviewCacheResult:
+                nonlocal generation
+                generation += 1
+                if generation == 1:
+                    started.set()
+                    if not release_old.wait(5):
+                        raise TimeoutError("旧キャッシュ生成を解放できませんでした")
+                    entry.output_path.parent.mkdir(parents=True, exist_ok=True)
+                    entry.output_path.write_bytes(b"old-generation")
+                else:
+                    if not entry.output_path.exists():
+                        entry.output_path.write_bytes(b"new-generation")
+                return AudioPreviewCacheResult({entry.channel_id: str(entry.output_path)})
+
+            controller = AudioPreviewController(cache_root, prepare_cache=prepare)
+            controller.set_project(project)
+            try:
+                controller.prepare_preview()
+                self.assertTrue(started.wait(5))
+                controller.clear_cache()
+                controller.prepare_preview()
+                next_future = controller.cache_future
+                self.assertIsNotNone(next_future)
+                release_old.set()
+                assert next_future is not None
+                next_future.result(timeout=5)
+                self.assertEqual(generation, 2)
+                self.assertEqual(entry.output_path.read_bytes(), b"new-generation")
+            finally:
+                release_old.set()
+                controller.shutdown()
 
 
 if __name__ == "__main__":

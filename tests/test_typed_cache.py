@@ -1,9 +1,9 @@
-import unittest
 
 from src.typed_cache import typed_lru_cache
+from tests.typed_case import TypedTestCase
 
 
-class TypedCacheTests(unittest.TestCase):
+class TypedCacheTests(TypedTestCase):
     def test_cache_preserves_keywords_eviction_and_clear(self) -> None:
         calls: list[str] = []
 

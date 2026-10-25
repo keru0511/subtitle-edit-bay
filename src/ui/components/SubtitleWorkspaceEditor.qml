@@ -43,21 +43,23 @@ Item {
                 colors: root.colors
                 objectName: "workspaceSubtitleAddButton"
                 text: "+ 字幕追加"
-                enabled: !root.appBackend.running
+                enabled: !root.appBackend.running && root.editorState.canAddToVisibleClip(
+                    Number(root.appBackend.workspace.editorPlayhead.sourcePositionMs) / 1000)
                 onClicked: root.editRequested("add", Number(root.appBackend.workspace.editorPlayhead.sourcePositionMs) / 1000)
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "workspaceSubtitleSplitButton"
                 text: "分割"
-                enabled: !root.appBackend.running && root.editorState.canSplitSelectedSegment(root.appBackend.workspace.editorPlayhead.sourcePositionMs)
+                enabled: !root.appBackend.running && root.appBackend.subtitles.filteredSelectedSegmentIndex >= 0
+                    && root.editorState.canSplitSelectedSegment(root.appBackend.workspace.editorPlayhead.sourcePositionMs)
                 onClicked: root.editRequested("split", Number(root.appBackend.workspace.editorPlayhead.sourcePositionMs) / 1000)
             }
             SubtitleEditorButton {
                 colors: root.colors
                 objectName: "workspaceSubtitleDeleteButton"
                 text: "削除"
-                enabled: !root.appBackend.running && root.appBackend.subtitles.selectedSegmentIndex >= 0
+                enabled: !root.appBackend.running && root.appBackend.subtitles.filteredSelectedSegmentIndex >= 0
                 onClicked: root.editRequested("delete", 0)
             }
             Item {
@@ -93,7 +95,8 @@ Item {
             player: root.player
             pixelsPerSecond: root.editorState.pixelsPerSecond
             snapSeconds: root.editorState.snapMilliseconds / 1000
-            editable: true
+            editable: !root.appBackend.running
+            applyClipFilter: true
             seekHandler: function (positionMilliseconds) {
                 root.seekRequested(positionMilliseconds);
             }

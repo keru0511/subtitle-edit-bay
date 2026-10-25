@@ -3,8 +3,13 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Iterator, Mapping, Protocol, Sequence
+from typing import Iterator, Sequence
 
+from openai_codex.client import CodexClient
+from openai_codex.generated.v2_all import ListMcpServerStatusResponse
+from openai_codex.models import JsonObject
+
+from .codex_sdk import sdk_deadline
 
 MAX_MCP_STATUS_PAGE_SIZE = 100
 MAX_MCP_STATUS_PAGES = 100
@@ -38,10 +43,6 @@ class CodexIsolationError(ValueError):
     """Raised when an app-server turn cannot be isolated safely."""
 
 
-class McpStatusClient(Protocol):
-    def mcp_server_status_list(self, **kwargs: Any) -> Mapping[str, Any]: ...
-
-
 def validate_isolated_cwd(value: str | Path | None) -> str:
     """Validate the empty directory used as an app-server turn cwd."""
 
@@ -70,7 +71,7 @@ def isolated_codex_cwd(prefix: str = "subtitle-edit-bay-codex-") -> Iterator[str
 
 
 def collect_mcp_server_names(
-    client: McpStatusClient,
+    client: CodexClient,
     *,
     thread_id: str = "",
     config_only: bool = False,
@@ -81,32 +82,26 @@ def collect_mcp_server_names(
     cursor = ""
     seen_cursors: set[str] = set()
     for _page_index in range(MAX_MCP_STATUS_PAGES):
-        params: dict[str, Any] = {
+        params: JsonObject = {
             "limit": MAX_MCP_STATUS_PAGE_SIZE,
             "detail": "toolsAndAuthOnly",
         }
         if cursor:
             params["cursor"] = cursor
         if thread_id:
-            params["thread_id"] = thread_id
-        payload = client.mcp_server_status_list(**params)
-        data = payload.get("data")
-        if not isinstance(data, list):
-            raise CodexIsolationError("Codex MCP inventory is invalid")
-        for item in data:
-            if not isinstance(item, Mapping):
-                raise CodexIsolationError("Codex MCP inventory is invalid")
-            name = item.get("name")
-            if not isinstance(name, str) or not name.strip() or len(name) > MAX_ISOLATED_ID_CHARS:
+            params["threadId"] = thread_id
+        with sdk_deadline(client):
+            payload = client.request("mcpServerStatus/list", params, response_model=ListMcpServerStatusResponse)
+        for item in payload.data:
+            name = item.name
+            if not name.strip() or len(name) > MAX_ISOLATED_ID_CHARS:
                 raise CodexIsolationError("Codex MCP inventory contains an invalid server name")
-            if config_only and (
-                item.get("pluginId") is not None or name == CODEX_APPS_MCP_SERVER_NAME
-            ):
+            if config_only and (item.plugin_id is not None or name == CODEX_APPS_MCP_SERVER_NAME):
                 continue
             names.append(name)
-        next_cursor = payload.get("nextCursor")
+        next_cursor = payload.next_cursor
         if next_cursor is None:
-            return tuple(dict.fromkeys(names))
+            return tuple(dict.fromkeys(names, True))
         if not isinstance(next_cursor, str) or not next_cursor or next_cursor in seen_cursors:
             raise CodexIsolationError("Codex MCP inventory pagination is invalid")
         seen_cursors.add(next_cursor)
@@ -114,7 +109,7 @@ def collect_mcp_server_names(
     raise CodexIsolationError("Codex MCP inventory exceeds the page limit")
 
 
-def build_isolated_thread_config(mcp_server_names: Sequence[str]) -> dict[str, Any]:
+def build_isolated_thread_config(mcp_server_names: Sequence[str]) -> JsonObject:
     """Build the shared fail-closed thread config for review/proposal turns."""
 
     return {
@@ -138,7 +133,7 @@ def build_isolated_thread_params(
     cwd: str | Path,
     *,
     mcp_server_names: Sequence[str],
-) -> dict[str, Any]:
+) -> JsonObject:
     """Build the shared camelCase app-server ``thread/start`` payload."""
 
     isolated_cwd = validate_isolated_cwd(cwd)
@@ -151,16 +146,4 @@ def build_isolated_thread_params(
         "sandbox": "read-only",
         "ephemeral": True,
         "runtimeWorkspaceRoots": [],
-    }
-
-
-def build_isolated_turn_kwargs(cwd: str | Path) -> dict[str, Any]:
-    """Build the shared snake_case ``run_structured_turn`` payload."""
-
-    return {
-        "cwd": validate_isolated_cwd(cwd),
-        "environments": [],
-        "approval_policy": "never",
-        "runtime_workspace_roots": [],
-        "sandbox_policy": {"type": "readOnly", "networkAccess": False},
     }

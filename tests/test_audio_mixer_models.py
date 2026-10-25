@@ -17,6 +17,7 @@ from src.audio_mixer import (
     validate_audio_channel_changes,
     video_track_entries,
 )
+from tests.typed_case import TypedTestCase
 
 
 def _dict(value: object) -> dict[object, object]:
@@ -32,7 +33,7 @@ def _channels(value: object) -> list[dict[object, object]]:
     return [_dict(channel) for channel in channels]
 
 
-class AudioMixerModelTests(unittest.TestCase):
+class AudioMixerModelTests(TypedTestCase):
     def _project(self) -> dict[object, object]:
         return {
             "render_settings": {"output_audio_track": "0:a:1"},

@@ -5,24 +5,36 @@ from typing import TYPE_CHECKING
 import math
 import threading
 from copy import deepcopy
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Mapping
 
 from PySide6.QtCore import (
-    Property,
     QObject,
-    Signal,
-    Slot,
 )
 from PySide6.QtWidgets import QFileDialog
 
+from .qt_decorators import Property, Signal, Slot
 from .color_config import normalize_rgb_color
+from .data_boundary import coerce_float, is_object_list, is_string_object_dict, is_string_object_mapping
 from .short_video_schema import VALID_FIT_MODES, VALID_TRANSITION_TYPES
 
 from .gui_feature_facade import FeatureFacade
 
 if TYPE_CHECKING:
     from .gui import EditBayBackend
+
+
+@dataclass(slots=True)
+class HighlightState:
+    """ハイライト候補の解析・取消状態。"""
+
+    candidates: list[dict[str, object]] = field(default_factory=list)
+    rejected: list[dict[str, object]] = field(default_factory=list)
+    status: str = "idle"
+    progress: float = 0.0
+    cancel: threading.Event = field(default_factory=threading.Event)
+    generation: int = 0
 
 
 class ShortVideoFacade(FeatureFacade):
@@ -35,13 +47,14 @@ class ShortVideoFacade(FeatureFacade):
 
     def __init__(self, backend: "EditBayBackend") -> None:
         super().__init__(backend)
+        self._highlight_state = HighlightState()
         backend.highlightAnalysisChanged.connect(self.highlightAnalysisChanged.emit)
         backend.highlightCandidatesChanged.connect(self.highlightCandidatesChanged.emit)
         backend.shortVideoChanged.connect(self.shortVideoChanged.emit)
         backend.shortVideoClipDataChanged.connect(self.shortVideoClipDataChanged.emit)
 
     @Property("QVariantList", notify=shortVideoChanged)
-    def shortVideoClips(self) -> list[dict[str, Any]]:
+    def shortVideoClips(self) -> list[dict[str, object]]:
         """Return all clips for callers outside QML.
 
         QML uses ``shortVideoClipModel`` and ``shortVideoClipAt`` so delegates and
@@ -50,10 +63,20 @@ class ShortVideoFacade(FeatureFacade):
 
         return [self._short_video_clip_view_at(index) for index in range(self._short_video_clip_count())]
 
+    @Property("QVariantList", notify=shortVideoChanged)
+    def addedHighlightCandidateIds(self) -> list[str]:
+        clips = self._short_video_section().get("clips")
+        if not is_object_list(clips):
+            return []
+        return [
+            str(clip["highlight_candidate_id"])
+            for clip in clips
+            if is_string_object_mapping(clip) and clip.get("highlight_candidate_id")
+        ]
+
     @Property("QVariantMap", notify=shortVideoChanged)
-    def shortVideoSettings(self) -> dict[str, Any]:
-        backend = self._backend
-        if backend._project is None:
+    def shortVideoSettings(self) -> dict[str, object]:
+        if self.project_editor.project is None:
             return {}
         section = self._short_video_section()
         return {
@@ -62,30 +85,26 @@ class ShortVideoFacade(FeatureFacade):
             "output": deepcopy(section.get("output", {})),
             "global_fit": str(section.get("global_fit", "cover")),
             "global_background_color": str(section.get("global_background_color", "000000")),
-            "subtitle_scale_percent": float(section.get("subtitle_scale_percent", 150.0)),
+            "subtitle_scale_percent": coerce_float(section.get("subtitle_scale_percent", 150.0)),
             "transition": deepcopy(section.get("transition", {})),
             "bgm": deepcopy(section.get("bgm", {})),
         }
 
     @Property("QVariantList", notify=highlightCandidatesChanged)
-    def highlightCandidates(self) -> list[dict[str, Any]]:
-        backend = self._backend
-        return deepcopy(backend._highlight_candidates)
+    def highlightCandidates(self) -> list[dict[str, object]]:
+        return deepcopy(self._highlight_state.candidates)
 
     @Property(bool, notify=highlightCandidatesChanged)
     def highlightUndoAvailable(self) -> bool:
-        backend = self._backend
-        return bool(backend._highlight_rejected)
+        return bool(self._highlight_state.rejected)
 
     @Property(str, notify=highlightAnalysisChanged)
     def highlightAnalysisState(self) -> str:
-        backend = self._backend
-        return backend._highlight_status
+        return self._highlight_state.status
 
     @Property(float, notify=highlightAnalysisChanged)
     def highlightAnalysisProgress(self) -> float:
-        backend = self._backend
-        return backend._highlight_progress
+        return self._highlight_state.progress
 
     @Property(QObject, constant=True)
     def shortVideoClipModel(self) -> QObject:
@@ -97,16 +116,15 @@ class ShortVideoFacade(FeatureFacade):
         return self._short_video_clip_count()
 
     @Slot(int, result="QVariantMap")
-    def shortVideoClipAt(self, index: int) -> dict[str, Any]:
+    def shortVideoClipAt(self, index: int) -> dict[str, object]:
         return self._short_video_clip_view_at(index)
 
-    def _short_video_section(self, *, for_edit: bool = False) -> dict[str, Any]:
+    def _short_video_section(self, *, for_edit: bool = False) -> dict[str, object]:
         """編集準備だけコピーし、表示ではクリップ全体の複製と正本の変更を避ける。"""
-        backend = self._backend
-        if backend._project is None:
+        if self.project_editor.project is None:
             return {}
-        section = backend._project.get("short_video")
-        if isinstance(section, dict):
+        section = self.project_editor.project.get("short_video")
+        if is_string_object_dict(section):
             return deepcopy(section) if for_edit else section
         return {
             "enabled": False,
@@ -120,10 +138,30 @@ class ShortVideoFacade(FeatureFacade):
             "clips": [],
         }
 
-    def _commit_short_video(self, section: dict[str, Any]) -> bool:
+    @staticmethod
+    def _clip_items(section: Mapping[str, object]) -> list[dict[str, object]]:
+        raw = section.get("clips", [])
+        if not is_object_list(raw):
+            raise ValueError("ショート動画のクリップ一覧が不正です")
+        if any(not is_string_object_mapping(clip) for clip in raw):
+            raise ValueError("ショート動画のクリップが不正です")
+        return [dict(clip) for clip in raw if is_string_object_mapping(clip)]
+
+    def _project_segments(self) -> list[dict[str, object]]:
+        project = self.project_editor.project
+        if project is None:
+            return []
+        raw = project.get("segments", [])
+        if not is_object_list(raw):
+            return []
+        return [dict(segment) for segment in raw if is_string_object_mapping(segment)]
+
+    def _commit_short_video(self, section: dict[str, object]) -> bool:
         backend = self._backend
+        if backend._project is None or backend._running:
+            return False
         try:
-            changed = backend._project_editor_controller.commit_section_change("short_video", section)
+            changed = self.project_editor.commit_section_change("short_video", section)
         except (ValueError, TypeError, OverflowError) as error:
             backend._set_status(f"ショート編集を適用できません: {error}", "CHECK")
             return False
@@ -132,36 +170,34 @@ class ShortVideoFacade(FeatureFacade):
         return True
 
     def _short_video_clip_count(self) -> int:
-        backend = self._backend
-        if backend._project is None:
+        if self.project_editor.project is None:
             return 0
-        section = backend._project.get("short_video", {})
-        if not isinstance(section, dict):
+        section = self.project_editor.project.get("short_video", {})
+        if not is_string_object_mapping(section):
             return 0
         clips = section.get("clips", [])
         return len(clips) if isinstance(clips, list) else 0
 
-    def _short_video_clip_view_at(self, index: int) -> dict[str, Any]:
-        backend = self._backend
-        if backend._project is None:
+    def _short_video_clip_view_at(self, index: int) -> dict[str, object]:
+        if self.project_editor.project is None:
             return {}
-        section = backend._project.get("short_video", {})
-        if not isinstance(section, dict):
+        section = self.project_editor.project.get("short_video", {})
+        if not is_string_object_mapping(section):
             return {}
         clips = section.get("clips", [])
         if not isinstance(clips, list) or not 0 <= index < len(clips):
             return {}
         clip = clips[index]
-        if not isinstance(clip, dict):
+        if not is_string_object_mapping(clip):
             return {}
-        return self._build_short_video_clip_view(clip, index)
+        return self._build_short_video_clip_view(dict(clip), index)
 
     def _refresh_short_video_clip_data(self) -> None:
         backend = self._backend
         backend._short_video_clip_model.refresh()
         backend.shortVideoClipDataChanged.emit()
 
-    def _build_short_video_clip_view(self, clip: dict[str, Any], index: int) -> dict[str, Any]:
+    def _build_short_video_clip_view(self, clip: dict[str, object], index: int) -> dict[str, object]:
         backend = self._backend
         segment_id = str(clip.get("segment_id", ""))
         segment = backend.subtitles._find_segment_by_id(segment_id) or {}
@@ -170,8 +206,8 @@ class ShortVideoFacade(FeatureFacade):
         global_background_color = str(section.get("global_background_color", "000000"))
         fit = str(clip.get("fit", global_fit))
         background_color = str(clip.get("background_color", global_background_color))
-        start = float(clip.get("start", segment.get("start", 0.0)))
-        end = float(clip.get("end", segment.get("end", 0.0)))
+        start = coerce_float(clip.get("start", segment.get("start", 0.0)))
+        end = coerce_float(clip.get("end", segment.get("end", 0.0)))
         return {
             "index": index,
             "segment_id": segment_id,
@@ -188,22 +224,30 @@ class ShortVideoFacade(FeatureFacade):
 
     @Slot()
     def initializeShortVideoClips(self) -> None:
-        backend = self._backend
-        if backend._project is None:
+        if self.project_editor.project is None:
             return
         section = self._short_video_section(for_edit=True)
-        if section.get("clips"):
+        if section.get("clips") or section.get("enabled"):
             return
-        clips: list[dict[str, Any]] = []
-        for segment in sorted(
-            backend._project.get("segments", []),
-            key=lambda item: (float(item.get("start", 0.0)), float(item.get("end", 0.0)), str(item.get("id", ""))),
-        ):
+        clips: list[dict[str, object]] = []
+        segments = self._project_segments()
+        order = sorted(
+            (
+                coerce_float(segment.get("start", 0.0)),
+                coerce_float(segment.get("end", 0.0)),
+                str(segment.get("id", "")),
+                index,
+            )
+            for index, segment in enumerate(segments)
+        )
+        for _start, _end, _id, index in order:
+            segment = segments[index]
             clips.append(
                 {
                     "segment_id": str(segment.get("id", "")),
-                    "start": float(segment.get("start", 0.0)),
-                    "end": float(segment.get("end", 0.0)),
+                    "start": coerce_float(segment.get("start", 0.0)),
+                    "end": coerce_float(segment.get("end", 0.0)),
+                    "auto_generated": True,
                 }
             )
         section["enabled"] = True
@@ -213,18 +257,18 @@ class ShortVideoFacade(FeatureFacade):
     @Slot(str, result=bool)
     def addShortVideoClip(self, segment_id: str) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return False
         segment = backend.subtitles._find_segment_by_id(segment_id)
         if segment is None:
             return False
         section = self._short_video_section(for_edit=True)
-        clips = list(section.get("clips", []))
+        clips = self._clip_items(section)
         clips.append(
             {
                 "segment_id": segment_id,
-                "start": float(segment.get("start", 0.0)),
-                "end": float(segment.get("end", 0.0)),
+                "start": coerce_float(segment.get("start", 0.0)),
+                "end": coerce_float(segment.get("end", 0.0)),
             }
         )
         section["clips"] = clips
@@ -233,7 +277,7 @@ class ShortVideoFacade(FeatureFacade):
     @Slot(float, float, result=bool)
     def addShortVideoClipByRange(self, start: float, end: float) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return False
         try:
             start = float(start)
@@ -246,7 +290,7 @@ class ShortVideoFacade(FeatureFacade):
         if start < 0.0 or start >= end or (duration > 0.0 and end > duration):
             return False
         section = self._short_video_section(for_edit=True)
-        clips = list(section.get("clips", []))
+        clips = self._clip_items(section)
         clips.append({"segment_id": "", "start": round(start, 3), "end": round(end, 3)})
         section["enabled"] = True
         section["clips"] = clips
@@ -255,10 +299,10 @@ class ShortVideoFacade(FeatureFacade):
     @Slot(int, result=bool)
     def removeShortVideoClip(self, index: int) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return False
         section = self._short_video_section(for_edit=True)
-        clips = list(section.get("clips", []))
+        clips = self._clip_items(section)
         if not 0 <= index < len(clips):
             return False
         clips.pop(index)
@@ -268,10 +312,10 @@ class ShortVideoFacade(FeatureFacade):
     @Slot(int, int, result=bool)
     def moveShortVideoClip(self, from_index: int, to_index: int) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return False
         section = self._short_video_section(for_edit=True)
-        clips = list(section.get("clips", []))
+        clips = self._clip_items(section)
         if not (0 <= from_index < len(clips)):
             return False
         if to_index < 0:
@@ -280,7 +324,8 @@ class ShortVideoFacade(FeatureFacade):
             to_index = len(clips)
         if from_index == to_index:
             return True
-        clip = clips.pop(from_index)
+        clip = dict(clips.pop(from_index))
+        clip.pop("auto_generated", None)
         if to_index > from_index:
             to_index -= 1
         clips.insert(to_index, clip)
@@ -288,59 +333,47 @@ class ShortVideoFacade(FeatureFacade):
         return self._commit_short_video(section)
 
     @Slot(int, "QVariantMap", result=bool)
-    def updateShortVideoClip(self, index: int, fields: dict[str, Any]) -> bool:
+    def updateShortVideoClip(self, index: int, fields: dict[str, object]) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return False
         if not isinstance(fields, dict) or not fields:
             return False
         section = self._short_video_section(for_edit=True)
-        clips = list(section.get("clips", []))
+        clips = self._clip_items(section)
         if not 0 <= index < len(clips):
             return False
         clip = dict(clips[index])
         trim_requested = "start" in fields or "end" in fields
-        if not trim_requested and not any(
-            key in fields for key in ("fit", "background_color")
-        ):
+        if not trim_requested and not any(key in fields for key in ("fit", "background_color")):
             return False
 
         if trim_requested:
             segment = backend.subtitles._find_segment_by_id(str(clip.get("segment_id", "")))
-            range_clip = not str(clip.get("segment_id", "")).strip()
+            range_clip = not str(clip.get("segment_id", "")).strip() or bool(clip.get("highlight_candidate_id"))
             if segment is None and not range_clip:
                 return False
             try:
-                if segment is None:
+                if range_clip:
                     segment_start = 0.0
                     segment_end = float(backend.projectDuration)
                     if segment_end <= 0.0:
-                        segment_end = max(float(clip.get("end", 0.0)), 0.0)
+                        segment_end = max(coerce_float(clip.get("end", 0.0)), 0.0)
+                elif segment is not None:
+                    segment_start = coerce_float(segment.get("start", 0.0))
+                    segment_end = coerce_float(segment.get("end", segment_start))
                 else:
-                    segment_start = float(segment.get("start", 0.0))
-                    segment_end = float(segment.get("end", segment_start))
-                start = float(fields.get("start", clip.get("start", segment_start)))
-                end = float(fields.get("end", clip.get("end", segment_end)))
-                if not all(
-                    math.isfinite(value)
-                    for value in (segment_start, segment_end, start, end)
-                ):
+                    return False
+                start = coerce_float(fields.get("start", clip.get("start", segment_start)))
+                end = coerce_float(fields.get("end", clip.get("end", segment_end)))
+                if not all(math.isfinite(value) for value in (segment_start, segment_end, start, end)):
                     return False
             except (TypeError, ValueError):
                 return False
             video_duration = backend.projectDuration
-            upper_bound = (
-                min(segment_end, video_duration)
-                if video_duration > 0.0
-                else segment_end
-            )
+            upper_bound = min(segment_end, video_duration) if video_duration > 0.0 else segment_end
             lower_bound = max(0.0, segment_start)
-            if (
-                upper_bound <= lower_bound
-                or start < lower_bound
-                or end > upper_bound
-                or start >= end
-            ):
+            if upper_bound <= lower_bound or start < lower_bound or end > upper_bound or start >= end:
                 return False
             clip["start"] = start
             clip["end"] = end
@@ -354,6 +387,7 @@ class ShortVideoFacade(FeatureFacade):
                 clip["background_color"] = normalize_rgb_color(fields["background_color"])
             except (TypeError, ValueError, OverflowError):
                 return False
+        clip.pop("auto_generated", None)
         clips[index] = clip
         section["clips"] = clips
         return self._commit_short_video(section)
@@ -361,7 +395,7 @@ class ShortVideoFacade(FeatureFacade):
     @Slot(str, result=bool)
     def setShortVideoGlobalFit(self, fit: str) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return False
         fit = str(fit).lower()
         if fit not in VALID_FIT_MODES:
@@ -373,7 +407,7 @@ class ShortVideoFacade(FeatureFacade):
     @Slot(str, result=bool)
     def setShortVideoGlobalBackgroundColor(self, color: str) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return False
         try:
             normalized = normalize_rgb_color(color)
@@ -386,7 +420,7 @@ class ShortVideoFacade(FeatureFacade):
     @Slot(str, float, result=bool)
     def setShortVideoTransition(self, transition_type: str, duration: float) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return False
         transition_type = str(transition_type).lower()
         if transition_type not in VALID_TRANSITION_TYPES:
@@ -396,22 +430,23 @@ class ShortVideoFacade(FeatureFacade):
         return self._commit_short_video(section)
 
     @Slot("QVariantMap", result=bool)
-    def setShortVideoBgm(self, fields: dict[str, Any]) -> bool:
+    def setShortVideoBgm(self, fields: dict[str, object]) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return False
         section = self._short_video_section(for_edit=True)
-        bgm = dict(section.get("bgm", {}))
+        existing_bgm = section.get("bgm")
+        bgm = dict(existing_bgm) if is_string_object_mapping(existing_bgm) else {}
         if "path" in fields:
             bgm["path"] = str(fields["path"])
         if "in" in fields:
-            bgm["in"] = max(0.0, float(fields["in"]))
+            bgm["in"] = max(0.0, coerce_float(fields["in"]))
         if "out" in fields:
-            bgm["out"] = max(bgm.get("in", 0.0), float(fields["out"]))
+            bgm["out"] = max(coerce_float(bgm.get("in", 0.0)), coerce_float(fields["out"]))
         if "start" in fields:
-            bgm["start"] = max(0.0, float(fields["start"]))
+            bgm["start"] = max(0.0, coerce_float(fields["start"]))
         if "volume" in fields:
-            volume = float(fields["volume"])
+            volume = coerce_float(fields["volume"])
             bgm["volume"] = max(0.0, min(1.0, volume))
         section["bgm"] = bgm
         return self._commit_short_video(section)
@@ -419,7 +454,7 @@ class ShortVideoFacade(FeatureFacade):
     @Slot(int, int, int, result=bool)
     def setShortVideoOutput(self, width: int, height: int, fps: int) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return False
         section = self._short_video_section(for_edit=True)
         section["output"] = {"width": max(1, int(width)), "height": max(1, int(height)), "fps": max(1, int(fps))}
@@ -428,7 +463,7 @@ class ShortVideoFacade(FeatureFacade):
     @Slot(float, result=bool)
     def setShortVideoSubtitleScale(self, percent: float) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return False
         section = self._short_video_section(for_edit=True)
         section["subtitle_scale_percent"] = max(0.0, float(percent))
@@ -437,24 +472,28 @@ class ShortVideoFacade(FeatureFacade):
     @Slot(result=bool)
     def startHighlightAnalysis(self) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running:
+        if self.project_editor.project is None or backend._running:
             return False
-        if backend._highlight_status in {"running", "cancelling"}:
+        if self._highlight_state.status in {"running", "cancelling"}:
             return False
-        backend._highlight_generation += 1
-        generation = backend._highlight_generation
+        self._highlight_state.generation += 1
+        generation = self._highlight_state.generation
         cancel_event = threading.Event()
-        backend._highlight_cancel = cancel_event
-        had_rejected = bool(backend._highlight_rejected)
-        backend._highlight_rejected = []
-        backend._highlight_status = "running"
-        backend._highlight_progress = 0.0
+        self._highlight_state.cancel = cancel_event
+        had_rejected = bool(self._highlight_state.rejected)
+        self._highlight_state.rejected = []
+        self._highlight_state.status = "running"
+        self._highlight_state.progress = 0.0
         backend.highlightAnalysisChanged.emit()
         if had_rejected:
             backend.highlightCandidatesChanged.emit()
-        segments = deepcopy(backend._project.get("segments", []))
+        segments = self._project_segments()
         duration = backend.projectDuration
-        cache_directory = Path(backend._project_path).parent / ".highlight-cache" if backend._project_path else None
+        cache_directory = (
+            Path(self.project_editor.project_path).parent / ".highlight-cache"
+            if self.project_editor.project_path
+            else None
+        )
 
         def worker() -> None:
             try:
@@ -470,18 +509,18 @@ class ShortVideoFacade(FeatureFacade):
                 if not self._is_current_highlight_run(generation):
                     return
                 if cancel_event.is_set():
-                    backend._highlight_status = "cancelled"
+                    self._highlight_state.status = "cancelled"
                     backend.highlightAnalysisChanged.emit()
                     return
-                backend._highlight_candidates = [item.to_json() for item in candidates]
-                backend._highlight_status = "completed"
-                backend._highlight_progress = 1.0
+                self._highlight_state.candidates = [item.to_json() for item in candidates]
+                self._highlight_state.status = "completed"
+                self._highlight_state.progress = 1.0
                 backend.highlightCandidatesChanged.emit()
                 backend.highlightAnalysisChanged.emit()
             except Exception as error:
                 if not self._is_current_highlight_run(generation):
                     return
-                backend._highlight_status = "cancelled" if cancel_event.is_set() else "error"
+                self._highlight_state.status = "cancelled" if cancel_event.is_set() else "error"
                 if not cancel_event.is_set():
                     backend._set_status(f"見どころ候補の解析に失敗しました: {error}", "ERROR")
                 backend.highlightAnalysisChanged.emit()
@@ -492,82 +531,106 @@ class ShortVideoFacade(FeatureFacade):
     @Slot(result=bool)
     def cancelHighlightAnalysis(self) -> bool:
         backend = self._backend
-        if backend._highlight_status != "running":
+        if self._highlight_state.status != "running":
             return False
-        backend._highlight_cancel.set()
-        backend._highlight_status = "cancelling"
+        self._highlight_state.cancel.set()
+        self._highlight_state.status = "cancelling"
         backend.highlightAnalysisChanged.emit()
         return True
 
     @Slot(result=bool)
     def retryHighlightAnalysis(self) -> bool:
         backend = self._backend
-        if backend._highlight_status in {"running", "cancelling"}:
+        if self.project_editor.project is None or backend._running or self._highlight_state.status in {"running", "cancelling"}:
             return False
-        backend._highlight_candidates = []
         backend.highlightCandidatesChanged.emit()
         return self.startHighlightAnalysis()
 
     @Slot(int, result=bool)
     def addHighlightCandidate(self, index: int) -> bool:
         backend = self._backend
-        if backend._project is None or backend._running or not 0 <= index < len(backend._highlight_candidates):
+        if (
+            self.project_editor.project is None
+            or backend._running
+            or self._highlight_state.status in {"running", "cancelling"}
+            or not 0 <= index < len(self._highlight_state.candidates)
+        ):
             return False
-        candidate = backend._highlight_candidates[index]
-        source_ids = [str(item) for item in candidate.get("source_segment_ids", [])]
+        candidate = self._highlight_state.candidates[index]
+        candidate_id = str(candidate.get("id", ""))
+        source_ids_value = candidate.get("source_segment_ids")
+        source_ids = [str(item) for item in source_ids_value] if is_object_list(source_ids_value) else []
         if not source_ids:
             return False
         section = self._short_video_section(for_edit=True)
-        clips = list(section.get("clips", []))
-        candidate_start = float(candidate.get("start", 0.0))
-        candidate_end = float(candidate.get("end", candidate_start))
-        if any(
-            str(clip.get("segment_id", "")) in source_ids
-            and min(float(clip.get("end", 0.0)), candidate_end)
-            > max(float(clip.get("start", 0.0)), candidate_start)
-            for clip in clips
-        ):
-            backend._set_status("同じ区間のショートクリップは追加済みです", "CHECK")
+        clips = self._clip_items(section)
+        candidate_start = coerce_float(candidate.get("start", 0.0))
+        candidate_end = coerce_float(candidate.get("end", candidate_start))
+        if candidate_id and any(str(clip.get("highlight_candidate_id", "")) == candidate_id for clip in clips):
+            backend._set_status("この見どころ候補は追加済みです", "CHECK")
             return False
         section["enabled"] = True
-        clips.append(
-            {
-                "segment_id": source_ids[0],
-                "start": candidate_start,
-                "end": candidate_end,
-                "highlight_candidate_id": str(candidate.get("id", "")),
-            }
-        )
-        section["clips"] = clips
+        candidate_clip: dict[str, object] = {
+            "segment_id": source_ids[0],
+            "start": candidate_start,
+            "end": candidate_end,
+            "highlight_candidate_id": candidate_id,
+        }
+        # 候補と重なる未編集の自動区間だけを差し引く。手編集済み・旧形式のクリップは保持する。
+        adjusted_clips: list[dict[str, object]] = []
+        inserted = False
+        for clip in clips:
+            clip_start = coerce_float(clip.get("start", 0.0))
+            clip_end = coerce_float(clip.get("end", clip_start))
+            if not clip.get("auto_generated") or clip_end <= candidate_start or clip_start >= candidate_end:
+                adjusted_clips.append(clip)
+                continue
+            if clip_start < candidate_start:
+                adjusted_clips.append({**clip, "end": candidate_start})
+            if not inserted:
+                adjusted_clips.append(candidate_clip)
+                inserted = True
+            if clip_end > candidate_end:
+                adjusted_clips.append({**clip, "start": candidate_end})
+        if not inserted:
+            adjusted_clips.append(candidate_clip)
+        section["clips"] = adjusted_clips
         return self._commit_short_video(section)
 
     @Slot(int, result=bool)
     def rejectHighlightCandidate(self, index: int) -> bool:
         backend = self._backend
-        if not 0 <= index < len(backend._highlight_candidates):
+        if (
+            backend._running
+            or self._highlight_state.status in {"running", "cancelling"}
+            or not 0 <= index < len(self._highlight_state.candidates)
+        ):
             return False
-        backend._highlight_rejected.append(backend._highlight_candidates.pop(index))
+        self._highlight_state.rejected.append(self._highlight_state.candidates.pop(index))
         backend.highlightCandidatesChanged.emit()
         return True
 
     @Slot(result=bool)
     def undoHighlightRejection(self) -> bool:
         backend = self._backend
-        if not backend._highlight_rejected:
+        if (
+            backend._running
+            or self._highlight_state.status in {"running", "cancelling"}
+            or not self._highlight_state.rejected
+        ):
             return False
-        backend._highlight_candidates.append(backend._highlight_rejected.pop())
+        self._highlight_state.candidates.append(self._highlight_state.rejected.pop())
         backend.highlightCandidatesChanged.emit()
         return True
 
     def _is_current_highlight_run(self, generation: int) -> bool:
-        backend = self._backend
-        return generation == backend._highlight_generation
+        return generation == self._highlight_state.generation
 
     def _update_highlight_progress(self, generation: int, value: float) -> None:
         backend = self._backend
         if not self._is_current_highlight_run(generation):
             return
-        backend._highlight_progress = max(0.0, min(1.0, float(value)))
+        self._highlight_state.progress = max(0.0, min(1.0, float(value)))
         backend.highlightAnalysisChanged.emit()
 
     @Slot(result=str)

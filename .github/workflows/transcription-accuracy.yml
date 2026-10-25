@@ -82,7 +82,7 @@ jobs:
 
       - name: 導入済みCPUランタイムを復元
         id: runtime-cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: ${{ github.workspace }}/.asr-venv
           key: ${{ steps.cache-context.outputs.key }}
@@ -123,7 +123,7 @@ jobs:
 
       - name: 検証済みCPUランタイムを保存
         if: always() && steps.runtime.outcome == 'success' && steps.runtime-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: ${{ github.workspace }}/.asr-venv
           key: ${{ steps.runtime-cache.outputs.cache-primary-key }}

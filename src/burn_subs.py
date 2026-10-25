@@ -6,6 +6,7 @@ import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Protocol, cast
 
 from .audio_mixer import build_audio_mix_filter
 from .ffmpeg_execution import run_atomic_ffmpeg_export
@@ -16,6 +17,19 @@ DEFAULT_AUDIO_CODEC = "copy"
 DEFAULT_AUDIO_TRACK = "0:a:0"
 DEFAULT_NVENC_PRESET = "p5"
 DEFAULT_FILTERED_AUDIO_RATE = "48000"
+
+
+class _BurnArgs(Protocol):
+    video: str
+    subtitle: str
+    output: str
+    video_codec: str
+    audio_codec: str
+    audio_track: str
+    nvenc_preset: str
+    nvenc_cq: int
+    x264_crf: int
+    run: bool
 
 
 def _as_escaped_ass_input(subtitle: str) -> tuple[str, str | None]:
@@ -62,7 +76,7 @@ def build_ffmpeg_command(
     x264_crf: int = DEFAULT_X264_CRF,
     audio_filter: str | None = None,
     audio_track: str = DEFAULT_AUDIO_TRACK,
-    audio_mix: dict | None = None,
+    audio_mix: object | None = None,
     audio_offset_seconds: float = 0.0,
     include_audio: bool = True,
 ) -> list[str]:
@@ -112,7 +126,7 @@ def run_ffmpeg_burn(
     x264_crf: int = DEFAULT_X264_CRF,
     audio_filter: str | None = None,
     audio_track: str = DEFAULT_AUDIO_TRACK,
-    audio_mix: dict | None = None,
+    audio_mix: object | None = None,
     audio_offset_seconds: float = 0.0,
     include_audio: bool = True,
     progress_callback: Callable[[str], None] | None = None,
@@ -158,16 +172,49 @@ def main() -> None:
     parser.add_argument("--output", required=True, help="Output video path.")
     parser.add_argument("--video-codec", default=DEFAULT_VIDEO_CODEC, help="Video codec such as libx264 or h264_nvenc.")
     parser.add_argument("--audio-codec", default=DEFAULT_AUDIO_CODEC, help="Audio codec such as copy or aac.")
-    parser.add_argument("--audio-track", default=DEFAULT_AUDIO_TRACK, help="Audio track included in the output, such as 0:a:0.")
-    parser.add_argument("--nvenc-preset", default=DEFAULT_NVENC_PRESET, help="NVENC preset used when --video-codec ends with _nvenc.")
-    parser.add_argument("--nvenc-cq", type=int, default=DEFAULT_NVENC_CQ, help="NVENC constant quality target; lower is higher quality.")
-    parser.add_argument("--x264-crf", type=int, default=DEFAULT_X264_CRF, help="libx264 constant quality target; lower is higher quality.")
+    parser.add_argument(
+        "--audio-track", default=DEFAULT_AUDIO_TRACK, help="Audio track included in the output, such as 0:a:0."
+    )
+    parser.add_argument(
+        "--nvenc-preset", default=DEFAULT_NVENC_PRESET, help="NVENC preset used when --video-codec ends with _nvenc."
+    )
+    parser.add_argument(
+        "--nvenc-cq", type=int, default=DEFAULT_NVENC_CQ, help="NVENC constant quality target; lower is higher quality."
+    )
+    parser.add_argument(
+        "--x264-crf",
+        type=int,
+        default=DEFAULT_X264_CRF,
+        help="libx264 constant quality target; lower is higher quality.",
+    )
     parser.add_argument("--run", action="store_true", help="Execute instead of printing the command.")
-    args = parser.parse_args()
+    args = cast(_BurnArgs, parser.parse_args())
 
-    command = build_ffmpeg_command(args.video, args.subtitle, args.output, video_codec=args.video_codec, audio_codec=args.audio_codec, nvenc_preset=args.nvenc_preset, nvenc_cq=args.nvenc_cq, x264_crf=args.x264_crf, audio_track=args.audio_track)
+    command = build_ffmpeg_command(
+        args.video,
+        args.subtitle,
+        args.output,
+        video_codec=args.video_codec,
+        audio_codec=args.audio_codec,
+        nvenc_preset=args.nvenc_preset,
+        nvenc_cq=args.nvenc_cq,
+        x264_crf=args.x264_crf,
+        audio_track=args.audio_track,
+    )
     if args.run:
-        print(run_ffmpeg_burn(args.video, args.subtitle, args.output, video_codec=args.video_codec, audio_codec=args.audio_codec, nvenc_preset=args.nvenc_preset, nvenc_cq=args.nvenc_cq, x264_crf=args.x264_crf, audio_track=args.audio_track))
+        print(
+            run_ffmpeg_burn(
+                args.video,
+                args.subtitle,
+                args.output,
+                video_codec=args.video_codec,
+                audio_codec=args.audio_codec,
+                nvenc_preset=args.nvenc_preset,
+                nvenc_cq=args.nvenc_cq,
+                x264_crf=args.x264_crf,
+                audio_track=args.audio_track,
+            )
+        )
         return
     print(" ".join(f'"{part}"' if " " in part else part for part in command))
 

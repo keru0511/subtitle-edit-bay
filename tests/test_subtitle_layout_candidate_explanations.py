@@ -4,13 +4,14 @@ import unittest
 from unittest import mock
 
 from src.subtitle_layout import scoring
+from tests.typed_case import TypedTestCase
 
 
 def jp(value: str) -> str:
     return value.encode("ascii").decode("unicode_escape")
 
 
-class SubtitleLayoutCandidateExplanationTests(unittest.TestCase):
+class SubtitleLayoutCandidateExplanationTests(TypedTestCase):
     def setUp(self) -> None:
         scoring.text_width.cache_clear()
         scoring.budoux_boundaries.cache_clear()

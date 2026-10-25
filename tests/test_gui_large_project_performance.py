@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from src.data_boundary import is_object_dict, is_object_list, is_string_object_mapping
 from scripts.compare_gui_performance import compare_reports
 from scripts.generate_large_gui_fixture import (
     FIXTURE_TIMESTAMP,
@@ -12,6 +13,7 @@ from scripts.generate_large_gui_fixture import (
     write_fixture_project,
 )
 from scripts.gui_performance_report import SCENARIO_NAMES, aggregate_runs
+from tests.typed_case import TypedTestCase
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -64,7 +66,9 @@ def _performance_report_with_event_loop_maxima(
     for maximum_ms in maxima_ms:
         scenarios = [_scenario_sample(name, 100.0) for name in SCENARIO_NAMES]
         for scenario in scenarios:
-            scenario["event_loop_latency_ms"]["max_ms"] = maximum_ms
+            latency = scenario["event_loop_latency_ms"]
+            assert is_object_dict(latency)
+            latency["max_ms"] = maximum_ms
         runs.append(
             {
                 "segment_count": 3_000,
@@ -82,7 +86,7 @@ def _performance_report_with_event_loop_maxima(
     }
 
 
-class GuiPerformanceFixtureTests(unittest.TestCase):
+class GuiPerformanceFixtureTests(TypedTestCase):
     def test_required_large_fixture_sizes_are_repeatable_and_varied(self) -> None:
         three_thousand = generate_segments(3_000)
         ten_thousand = generate_segments(10_000)
@@ -105,13 +109,23 @@ class GuiPerformanceFixtureTests(unittest.TestCase):
             first = project_path.read_bytes()
             write_fixture_project(project_path, media_path=media, segment_count=25)
             second = project_path.read_bytes()
-            payload = json.loads(second)
+            payload: object = json.loads(second)
 
         self.assertEqual(first, second)
+        assert is_string_object_mapping(payload)
         self.assertEqual(payload["created_at"], FIXTURE_TIMESTAMP)
-        self.assertEqual(len(payload["segments"]), 25)
-        self.assertEqual(len(payload["short_video"]["clips"]), 25)
-        self.assertEqual(payload["video"]["duration_seconds"], payload["segments"][-1]["end"])
+        segments = payload["segments"]
+        short_video = payload["short_video"]
+        video = payload["video"]
+        assert is_object_list(segments)
+        assert is_string_object_mapping(short_video) and is_string_object_mapping(video)
+        clips = short_video["clips"]
+        assert is_object_list(clips)
+        self.assertEqual(len(segments), 25)
+        self.assertEqual(len(clips), 25)
+        last_segment = segments[-1]
+        assert is_string_object_mapping(last_segment)
+        self.assertEqual(video["duration_seconds"], last_segment["end"])
 
     def test_report_aggregation_and_regression_diagnostics_name_the_scenario(self) -> None:
         baseline = _performance_report(100.0)

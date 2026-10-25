@@ -10,6 +10,7 @@ ColumnLayout {
 
     property var appBackend: null
     property bool refreshingSettings: false
+    property bool committingDrafts: false
     readonly property bool editingEnabled: settingsRoot.appBackend && !settingsRoot.appBackend.running
     property var fitOptions: [
         { "label": "画面いっぱい", "value": "cover" },
@@ -30,6 +31,49 @@ ColumnLayout {
         return 0
     }
 
+    function hasIncompleteInput() {
+        return !bgColorField.acceptableInput || !bgmIn.acceptableInput
+            || !bgmOut.acceptableInput || !bgmStart.acceptableInput
+    }
+
+    function commitPendingEdits() {
+        if (settingsRoot.committingDrafts)
+            return true
+        if (!settingsRoot.appBackend || settingsRoot.appBackend.running || settingsRoot.hasIncompleteInput())
+            return false
+        settingsRoot.committingDrafts = true
+        try {
+            if (bgColorField.draftEdited) {
+                bgColorField.draftEdited = false
+                if (!settingsRoot.appBackend.shortVideo.setShortVideoGlobalBackgroundColor(bgColorField.text)) {
+                    bgColorField.draftEdited = true
+                    return false
+                }
+            }
+            var inEdited = bgmIn.draftEdited
+            var outEdited = bgmOut.draftEdited
+            var startEdited = bgmStart.draftEdited
+            var bgmChanges = {}
+            if (inEdited) bgmChanges["in"] = Number(bgmIn.text)
+            if (outEdited) bgmChanges["out"] = Number(bgmOut.text)
+            if (startEdited) bgmChanges["start"] = Number(bgmStart.text)
+            if (inEdited || outEdited || startEdited) {
+                bgmIn.draftEdited = false
+                bgmOut.draftEdited = false
+                bgmStart.draftEdited = false
+                if (!settingsRoot.appBackend.shortVideo.setShortVideoBgm(bgmChanges)) {
+                    bgmIn.draftEdited = inEdited
+                    bgmOut.draftEdited = outEdited
+                    bgmStart.draftEdited = startEdited
+                    return false
+                }
+            }
+            return true
+        } finally {
+            settingsRoot.committingDrafts = false
+        }
+    }
+
     function refresh() {
         if (!settingsRoot.appBackend || settingsRoot.refreshingSettings) return
         // 表示値の反映で発火する変更通知をユーザーの編集として扱わない。
@@ -37,17 +81,18 @@ ColumnLayout {
         try {
             var s = settingsRoot.appBackend.shortVideo.shortVideoSettings
             fitCombo.currentIndex = settingsRoot.indexForValue(settingsRoot.fitOptions, s.global_fit)
-            bgColorField.text = s.global_background_color
+            if (!bgColorField.draftEdited) bgColorField.text = s.global_background_color
             transitionCombo.currentIndex = settingsRoot.indexForValue(settingsRoot.transitionOptions, s.transition.type)
-            transitionDuration.value = s.transition.duration
+            if (!transitionDuration.pressed) transitionDuration.value = s.transition.duration
             scaleSpin.value = s.subtitle_scale_percent
 
             var bgm = s.bgm || {}
             bgmFileLabel.text = bgm.path ? bgm.path.toString() : "BGM ファイルを選択"
-            bgmIn.text = bgm["in"] ? bgm["in"].toString() : "0"
-            bgmOut.text = bgm.out ? bgm.out.toString() : "0"
-            bgmStart.text = bgm.start ? bgm.start.toString() : "0"
-            bgmVolumeSlider.value = (bgm.volume !== undefined) ? bgm.volume : 0.3
+            if (!bgmIn.draftEdited) bgmIn.text = bgm["in"] ? bgm["in"].toString() : "0"
+            if (!bgmOut.draftEdited) bgmOut.text = bgm.out ? bgm.out.toString() : "0"
+            if (!bgmStart.draftEdited) bgmStart.text = bgm.start ? bgm.start.toString() : "0"
+            if (!bgmVolumeSlider.pressed)
+                bgmVolumeSlider.value = (bgm.volume !== undefined) ? bgm.volume : 0.3
         } finally {
             settingsRoot.refreshingSettings = false
         }
@@ -99,13 +144,16 @@ ColumnLayout {
             Layout.preferredWidth: 80
             text: "000000"
             enabled: settingsRoot.editingEnabled
+            validator: RegularExpressionValidator { regularExpression: /^#?[0-9A-Fa-f]{6}$/ }
+            property bool draftEdited: false
+            onTextEdited: draftEdited = true
             onEditingFinished: {
                 if (settingsRoot.appBackend) {
-                    var raw = text.replace("#", "")
-                    if (raw.length === 6) {
-                        settingsRoot.appBackend.shortVideo.setShortVideoGlobalBackgroundColor(raw)
-                    }
+                    var savedColor = String(settingsRoot.appBackend.shortVideo.shortVideoSettings.global_background_color || "")
+                    if (text.replace("#", "").toUpperCase() !== savedColor.replace("#", "").toUpperCase())
+                        draftEdited = true
                 }
+                settingsRoot.commitPendingEdits()
             }
         }
         Rectangle {
@@ -116,6 +164,7 @@ ColumnLayout {
             border.color: "#30363D"
         }
         Button {
+            objectName: "shortModeBackgroundColorButton"
             Layout.preferredWidth: 32
             text: "..."
             enabled: settingsRoot.editingEnabled
@@ -125,11 +174,15 @@ ColumnLayout {
 
     ColorDialog {
         id: bgColorDialog
+        objectName: "shortModeBackgroundColorDialog"
         title: "背景色を選択"
         onAccepted: {
             if (settingsRoot.appBackend && !settingsRoot.appBackend.running && !settingsRoot.refreshingSettings) {
                 var hex = selectedColor.toString().replace("#", "")
-                settingsRoot.appBackend.shortVideo.setShortVideoGlobalBackgroundColor(hex)
+                var hadDraft = bgColorField.draftEdited
+                bgColorField.draftEdited = false
+                if (!settingsRoot.appBackend.shortVideo.setShortVideoGlobalBackgroundColor(hex))
+                    bgColorField.draftEdited = hadDraft
             }
         }
     }
@@ -159,11 +212,13 @@ ColumnLayout {
             objectName: "shortModeTransitionDurationSlider"
             from: 0; to: 2.0; stepSize: 0.1
             enabled: settingsRoot.editingEnabled
-            onValueChanged: {
+            function commitDuration() {
                 if (settingsRoot.appBackend && !settingsRoot.appBackend.running && !settingsRoot.refreshingSettings) {
                     settingsRoot.appBackend.shortVideo.setShortVideoTransition(transitionCombo.currentValue, value)
                 }
             }
+            onMoved: if (!pressed) commitDuration()
+            onPressedChanged: if (!pressed) commitDuration()
         }
     }
 
@@ -241,7 +296,12 @@ ColumnLayout {
             Layout.preferredWidth: 70
             enabled: settingsRoot.editingEnabled
             text: "0"
-            onEditingFinished: _sendBgmUpdate({"in": parseFloat(text) || 0})
+            property bool draftEdited: false
+            onTextEdited: draftEdited = true
+            onEditingFinished: {
+                draftEdited = true
+                settingsRoot.commitPendingEdits()
+            }
         }
         TimeField {
             id: bgmOut
@@ -252,7 +312,12 @@ ColumnLayout {
             Layout.preferredWidth: 70
             enabled: settingsRoot.editingEnabled
             text: "0"
-            onEditingFinished: _sendBgmUpdate({"out": parseFloat(text) || 0})
+            property bool draftEdited: false
+            onTextEdited: draftEdited = true
+            onEditingFinished: {
+                draftEdited = true
+                settingsRoot.commitPendingEdits()
+            }
         }
         TimeField {
             id: bgmStart
@@ -263,7 +328,12 @@ ColumnLayout {
             Layout.preferredWidth: 70
             enabled: settingsRoot.editingEnabled
             text: "0"
-            onEditingFinished: _sendBgmUpdate({"start": parseFloat(text) || 0})
+            property bool draftEdited: false
+            onTextEdited: draftEdited = true
+            onEditingFinished: {
+                draftEdited = true
+                settingsRoot.commitPendingEdits()
+            }
         }
         ColumnLayout {
             Layout.row: 3
@@ -278,7 +348,8 @@ ColumnLayout {
                 objectName: "shortModeBgmVolumeSlider"
                 from: 0.0; to: 1.0; stepSize: 0.05
                 enabled: settingsRoot.editingEnabled
-                onValueChanged: _sendBgmUpdate({"volume": value})
+                onMoved: if (!pressed) settingsRoot._sendBgmUpdate({"volume": value})
+                onPressedChanged: if (!pressed) settingsRoot._sendBgmUpdate({"volume": value})
             }
         }
     }

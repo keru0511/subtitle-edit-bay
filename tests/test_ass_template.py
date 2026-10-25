@@ -10,9 +10,10 @@ from src.ass_template import (
     clone_style_definition,
     normalize_ass_color,
 )
+from tests.typed_case import TypedTestCase
 
 
-class AssTemplateTests(unittest.TestCase):
+class AssTemplateTests(TypedTestCase):
     def test_normalize_ass_color_accepts_and_preserves_andh_format(self) -> None:
         self.assertEqual(normalize_ass_color("&H00FF1234"), "&H00FF1234")
 

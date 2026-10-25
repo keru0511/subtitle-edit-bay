@@ -12,9 +12,10 @@ from src.transcription_context_config import (
     resolve_transcription_context_file_path,
     transcription_context_from_runtime_config,
 )
+from tests.typed_case import TypedTestCase
 
 
-class TranscriptionContextConfigTests(unittest.TestCase):
+class TranscriptionContextConfigTests(TypedTestCase):
     def test_missing_context_returns_default_shape(self) -> None:
         context = normalized_transcription_context_from_runtime_config({})
 
@@ -25,6 +26,8 @@ class TranscriptionContextConfigTests(unittest.TestCase):
             "dictionary_path": None,
             "dictionary_confirmed": False,
             "web_dictionary_enabled": False,
+            "web_dictionary_url": "",
+            "web_dictionary_snippet": "",
             "web_dictionary_candidates": [],
             "web_dictionary_terms": [],
             "web_dictionary_candidate_metadata": [],

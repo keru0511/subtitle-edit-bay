@@ -7,9 +7,15 @@ import uuid
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol, TextIO, cast, runtime_checkable
 
 
 CommandBuilder = Callable[[str, str], list[str]]
+
+
+@runtime_checkable
+class _Closable(Protocol):
+    def close(self) -> None: ...
 
 
 def _partial_output_path(output: Path) -> Path:
@@ -37,11 +43,10 @@ _NVENC_FALLBACK_HINTS = (
 
 
 def _should_retry_with_cpu(error: subprocess.CalledProcessError) -> bool:
-    message = " ".join(
-        part
-        for part in [str(error.stdout or ""), str(error.stderr or ""), str(error.output or "")]
-        if part
-    ).lower()
+    stdout: object = error.stdout
+    stderr: object = error.stderr
+    output: object = error.output
+    message = " ".join(part for part in [str(stdout or ""), str(stderr or ""), str(output or "")] if part).lower()
     return any(hint in message for hint in _NVENC_FALLBACK_HINTS)
 
 
@@ -51,7 +56,7 @@ def run_ffmpeg_command(
     progress_callback: Callable[[str], None] | None = None,
 ) -> None:
     """Run FFmpeg, forwarding logs and retaining a bounded failure tail."""
-    process = subprocess.Popen(
+    process: subprocess.Popen[str] = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -61,7 +66,7 @@ def run_ffmpeg_command(
         bufsize=1,
     )
     tail: deque[str] = deque(maxlen=80)
-    stdout = process.stdout
+    stdout = cast(TextIO | None, process.stdout)
     try:
         if stdout is not None:
             for raw_line in stdout:
@@ -73,9 +78,8 @@ def run_ffmpeg_command(
                     else:
                         progress_callback(line)
     finally:
-        close = getattr(stdout, "close", None)
-        if close is not None:
-            close()
+        if isinstance(stdout, _Closable):
+            stdout.close()
     return_code = process.wait()
     if return_code:
         raise subprocess.CalledProcessError(return_code, command, output="\n".join(tail))

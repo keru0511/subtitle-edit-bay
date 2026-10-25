@@ -3,8 +3,10 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 import math
-from typing import Any, Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from typing import cast
 
+from .data_boundary import coerce_float, is_object_dict, is_object_list, is_object_mapping
 from .subtitle_project import SubtitleProjectError, validate_project
 
 
@@ -71,8 +73,8 @@ class EditOperation:
     type: str
     segment_id: str = ""
     segment_ids: tuple[str, ...] = ()
-    changes: Mapping[str, Any] | None = None
-    segment: Mapping[str, Any] | None = None
+    changes: Mapping[object, object] | None = None
+    segment: Mapping[object, object] | None = None
     split_at: float | None = None
     new_segment_id: str = ""
     first_text: str | None = None
@@ -80,8 +82,8 @@ class EditOperation:
     reason: str = ""
 
     @classmethod
-    def from_json(cls, payload: Mapping[str, Any], index: int) -> "EditOperation":
-        _require_object(payload, f"operations[{index}]")
+    def from_json(cls, payload: object, index: int) -> "EditOperation":
+        payload = _require_object(payload, f"operations[{index}]")
         _reject_unknown(payload, OPERATION_FIELDS, f"operations[{index}]")
         operation_type = str(payload.get("type", ""))
         if operation_type not in OPERATION_TYPES:
@@ -91,22 +93,24 @@ class EditOperation:
         raw_segment_ids = payload.get("segment_ids", [])
         if raw_segment_ids is None:
             raw_segment_ids = []
-        if not isinstance(raw_segment_ids, list) or not all(isinstance(item, str) for item in raw_segment_ids):
+        if not is_object_list(raw_segment_ids) or not all(isinstance(item, str) for item in raw_segment_ids):
             raise EditProposalError(f"operations[{index}].segment_ids must be an array of strings")
+        segment_ids = tuple(item for item in raw_segment_ids if isinstance(item, str))
         changes = payload.get("changes")
         if changes is not None:
-            _require_object(changes, f"operations[{index}].changes")
+            changes = _require_object(changes, f"operations[{index}].changes")
             _reject_unknown(changes, UPDATE_FIELDS, f"operations[{index}].changes")
         segment = payload.get("segment")
         if segment is not None:
-            _require_object(segment, f"operations[{index}].segment")
+            segment = _require_object(segment, f"operations[{index}].segment")
             _reject_unknown(segment, SEGMENT_FIELDS, f"operations[{index}].segment")
-        split_at = payload.get("split_at")
-        if split_at is not None:
-            if isinstance(split_at, bool):
+        raw_split_at = payload.get("split_at")
+        split_at: float | None = None
+        if raw_split_at is not None:
+            if isinstance(raw_split_at, bool):
                 raise EditProposalError(f"operations[{index}].split_at must be a number")
             try:
-                split_at = float(split_at)
+                split_at = coerce_float(raw_split_at)
             except (TypeError, ValueError) as error:
                 raise EditProposalError(f"operations[{index}].split_at must be a number") from error
             if not math.isfinite(split_at):
@@ -120,15 +124,13 @@ class EditOperation:
         if operation_type == "split_segment" and split_at is None:
             raise EditProposalError(f"operations[{index}].split_at is required for split_segment")
         if operation_type == "merge_segments":
-            if len(raw_segment_ids) < 2 or len(set(raw_segment_ids)) != len(raw_segment_ids):
-                raise EditProposalError(
-                    f"operations[{index}].segment_ids must contain at least two unique ids"
-                )
+            if len(segment_ids) < 2 or len(set(segment_ids)) != len(segment_ids):
+                raise EditProposalError(f"operations[{index}].segment_ids must contain at least two unique ids")
         return cls(
             operation_id=operation_id,
             type=operation_type,
             segment_id=segment_id,
-            segment_ids=tuple(raw_segment_ids),
+            segment_ids=segment_ids,
             changes=deepcopy(changes) if changes is not None else None,
             segment=deepcopy(segment) if segment is not None else None,
             split_at=split_at,
@@ -138,8 +140,8 @@ class EditOperation:
             reason=str(payload.get("reason", "")),
         )
 
-    def to_json(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {
+    def to_json(self) -> dict[str, object]:
+        payload: dict[str, object] = {
             "id": self.operation_id,
             "type": self.type,
             "reason": self.reason,
@@ -171,34 +173,32 @@ class CodexEditProposal:
     base_revision: int | None = None
 
     @classmethod
-    def from_json(cls, payload: Mapping[str, Any]) -> "CodexEditProposal":
-        _require_object(payload, "proposal")
+    def from_json(cls, payload: object) -> "CodexEditProposal":
+        payload = _require_object(payload, "proposal")
         _reject_unknown(payload, ROOT_FIELDS, "proposal")
         raw_operations = payload.get("operations")
-        if not isinstance(raw_operations, list) or not raw_operations:
+        if not is_object_list(raw_operations) or not raw_operations:
             raise EditProposalError("proposal.operations must be a non-empty array")
-        operations = tuple(
-            EditOperation.from_json(item, index)
-            for index, item in enumerate(raw_operations)
-        )
+        operations = tuple(EditOperation.from_json(item, index) for index, item in enumerate(raw_operations))
         operation_ids = [item.operation_id for item in operations]
         if len(operation_ids) != len(set(operation_ids)):
             raise EditProposalError("proposal operation ids must be unique")
         warnings = payload.get("warnings", [])
-        if not isinstance(warnings, list) or not all(isinstance(item, str) for item in warnings):
+        if not is_object_list(warnings) or not all(isinstance(item, str) for item in warnings):
             raise EditProposalError("proposal.warnings must be an array of strings")
+        warning_texts = tuple(item for item in warnings if isinstance(item, str))
         base_revision = payload.get("base_revision")
         if base_revision is not None and type(base_revision) is not int:
             raise EditProposalError("proposal.base_revision must be an integer")
         return cls(
             summary=str(payload.get("summary", "")),
             operations=operations,
-            warnings=tuple(warnings),
+            warnings=warning_texts,
             base_revision=base_revision,
         )
 
-    def to_json(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {
+    def to_json(self) -> dict[str, object]:
+        payload: dict[str, object] = {
             "summary": self.summary,
             "operations": [operation.to_json() for operation in self.operations],
             "warnings": list(self.warnings),
@@ -210,15 +210,15 @@ class CodexEditProposal:
 
 @dataclass(frozen=True)
 class EditProposalApplyResult:
-    project: dict[str, Any]
-    diff: dict[str, list[dict[str, Any]]]
+    project: dict[object, object]
+    diff: dict[str, list[dict[object, object]]]
     changed_segment_ids: tuple[str, ...]
     applied_operation_ids: tuple[str, ...]
 
 
 def apply_edit_proposal(
-    project: Mapping[str, Any],
-    proposal: CodexEditProposal | Mapping[str, Any],
+    project: Mapping[str, object],
+    proposal: object,
     *,
     selected_operation_ids: Iterable[str] | None = None,
     expected_revision: int | None = None,
@@ -236,7 +236,7 @@ def apply_edit_proposal(
         )
 
     selected = set(selected_operation_ids) if selected_operation_ids is not None else None
-    candidate = deepcopy(dict(project))
+    candidate = cast(dict[object, object], deepcopy(dict(project)))
     before_segments = deepcopy(candidate.get("segments", []))
     applied_ids: list[str] = []
     changed_ids: set[str] = set()
@@ -264,40 +264,50 @@ def apply_edit_proposal(
 
 
 def build_segment_diff(
-    before_segments: list[Mapping[str, Any]],
-    after_segments: list[Mapping[str, Any]],
-) -> dict[str, list[dict[str, Any]]]:
-    before = {str(item.get("id")): dict(item) for item in before_segments}
-    after = {str(item.get("id")): dict(item) for item in after_segments}
+    before_segments: object,
+    after_segments: object,
+) -> dict[str, list[dict[object, object]]]:
+    if not is_object_list(before_segments) or not is_object_list(after_segments):
+        raise EditProposalError("project.segments must be an array")
+    before = _index_segments(before_segments)
+    after = _index_segments(after_segments)
     added = [deepcopy(after[key]) for key in after if key not in before]
     removed = [deepcopy(before[key]) for key in before if key not in after]
-    updated = [
-        {"before": deepcopy(before[key]), "after": deepcopy(after[key])}
-        for key in after
-        if key in before and before[key] != after[key]
-    ]
+    updated: list[dict[object, object]] = []
+    for key in after:
+        if key in before and before[key] != after[key]:
+            updated.append({"before": deepcopy(before[key]), "after": deepcopy(after[key])})
     return {"added": added, "updated": updated, "removed": removed}
 
 
-def build_undo_entry(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, Any]:
+def _index_segments(values: list[object]) -> dict[str, dict[object, object]]:
+    indexed: dict[str, dict[object, object]] = {}
+    for value in values:
+        item = _require_object(value, "segment")
+        indexed[str(item.get("id"))] = dict(item)
+    return indexed
+
+
+def build_undo_entry(before: Mapping[str, object], after: Mapping[str, object]) -> dict[str, object]:
     return {"before": deepcopy(dict(before)), "after": deepcopy(dict(after)), "kind": "codex_proposal"}
 
 
 def _apply_operation(
-    project: dict[str, Any],
+    project: dict[object, object],
     operation: EditOperation,
     changed_ids: set[str],
 ) -> None:
     segments = project.get("segments")
-    if not isinstance(segments, list):
+    if not is_object_list(segments):
         raise EditProposalError("project.segments must be an array")
     if operation.type == "update_segment":
         index = _find_segment_index(segments, operation.segment_id)
         changes = dict(operation.changes or {})
         if not changes:
             raise EditProposalError(f"{operation.operation_id}: changes must not be empty")
-        segments[index].update(deepcopy(changes))
-        _set_manual_flags(segments[index], changes)
+        segment = _segment_at(segments, index)
+        segment.update(deepcopy(changes))
+        _set_manual_flags(segment, changes)
         changed_ids.add(operation.segment_id)
         return
     if operation.type == "delete_segment":
@@ -312,7 +322,7 @@ def _apply_operation(
         segment_id = str(segment.get("id", ""))
         if not segment_id:
             raise EditProposalError(f"{operation.operation_id}: segment.id is required")
-        if any(str(item.get("id")) == segment_id for item in segments):
+        if any(str(_require_object(item, "segment").get("id")) == segment_id for item in segments):
             raise EditProposalError(f"segment id already exists: {segment_id}")
         segments.append(segment)
         changed_ids.add(segment_id)
@@ -327,16 +337,18 @@ def _apply_operation(
 
 
 def _apply_split(
-    segments: list[dict[str, Any]],
+    segments: list[object],
     operation: EditOperation,
     changed_ids: set[str],
 ) -> None:
     index = _find_segment_index(segments, operation.segment_id)
-    original = deepcopy(segments[index])
-    if operation.split_at is None or not original["start"] < operation.split_at < original["end"]:
+    original = deepcopy(_segment_at(segments, index))
+    if operation.split_at is None or not coerce_float(original["start"]) < operation.split_at < coerce_float(
+        original["end"]
+    ):
         raise EditProposalError(f"{operation.operation_id}: split_at must be inside the segment")
     new_id = operation.new_segment_id or f"{operation.segment_id}-split"
-    if any(str(item.get("id")) == new_id for item in segments):
+    if any(str(_require_object(item, "segment").get("id")) == new_id for item in segments):
         raise EditProposalError(f"segment id already exists: {new_id}")
     first = deepcopy(original)
     second = deepcopy(original)
@@ -353,12 +365,12 @@ def _apply_split(
         second["words"] = second_words
     _set_manual_flags(first, {"start": first["start"], "end": first["end"], "text": first["text"]})
     _set_manual_flags(second, {"start": second["start"], "end": second["end"], "text": second["text"]})
-    segments[index:index + 1] = [first, second]
+    segments[index : index + 1] = [first, second]
     changed_ids.update({operation.segment_id, new_id})
 
 
 def _apply_merge(
-    segments: list[dict[str, Any]],
+    segments: list[object],
     operation: EditOperation,
     changed_ids: set[str],
 ) -> None:
@@ -366,18 +378,16 @@ def _apply_merge(
         raise EditProposalError(f"{operation.operation_id}: at least two unique segment_ids are required")
     indexes = [_find_segment_index(segments, segment_id) for segment_id in operation.segment_ids]
     ordered = sorted(indexes)
-    selected = [segments[index] for index in ordered]
+    selected = [_segment_at(segments, index) for index in ordered]
     merged = deepcopy(selected[0])
-    merged["start"] = min(float(item["start"]) for item in selected)
-    merged["end"] = max(float(item["end"]) for item in selected)
-    merged["text"] = str(operation.first_text) if operation.first_text is not None else " ".join(
-        str(item.get("text", "")).strip() for item in selected
-    ).strip()
-    merged_words = [
-        deepcopy(word)
-        for item in selected
-        for word in (item.get("words", []) if isinstance(item.get("words", []), list) else [])
-    ]
+    merged["start"] = min(coerce_float(item["start"]) for item in selected)
+    merged["end"] = max(coerce_float(item["end"]) for item in selected)
+    merged["text"] = (
+        str(operation.first_text)
+        if operation.first_text is not None
+        else " ".join(str(item.get("text", "")).strip() for item in selected).strip()
+    )
+    merged_words: list[object] = [deepcopy(word) for item in selected for word in _words_in_segment(item)]
     if merged_words or any("words" in item for item in selected):
         merged["words"] = sorted(merged_words, key=_word_sort_key)
     _set_manual_flags(merged, {"start": merged["start"], "end": merged["end"], "text": merged["text"]})
@@ -387,11 +397,16 @@ def _apply_merge(
     changed_ids.update(operation.segment_ids)
 
 
-def _find_segment_index(segments: list[dict[str, Any]], segment_id: str) -> int:
+def _words_in_segment(segment: Mapping[object, object]) -> list[object]:
+    words = segment.get("words", [])
+    return words if is_object_list(words) else []
+
+
+def _find_segment_index(segments: list[object], segment_id: str) -> int:
     if not segment_id:
         raise EditProposalError("segment_id is required")
     for index, segment in enumerate(segments):
-        if str(segment.get("id")) == segment_id:
+        if str(_require_object(segment, "segment").get("id")) == segment_id:
             return index
     raise EditProposalError(f"segment not found: {segment_id}")
 
@@ -399,19 +414,19 @@ def _find_segment_index(segments: list[dict[str, Any]], segment_id: str) -> int:
 def _partition_words(
     words: object,
     split_at: float,
-) -> tuple[list[Any], list[Any]]:
-    first_words: list[Any] = []
-    second_words: list[Any] = []
-    if not isinstance(words, list):
+) -> tuple[list[object], list[object]]:
+    first_words: list[object] = []
+    second_words: list[object] = []
+    if not is_object_list(words):
         return first_words, second_words
     for word in words:
-        if not isinstance(word, Mapping):
+        if not is_object_mapping(word):
             first_words.append(deepcopy(word))
             continue
         copied = deepcopy(dict(word))
         try:
-            word_start = float(copied.get("start", split_at))
-            word_end = float(copied.get("end", word_start))
+            word_start = coerce_float(copied.get("start", split_at))
+            word_end = coerce_float(copied.get("end", word_start))
         except (TypeError, ValueError):
             first_words.append(copied)
             continue
@@ -428,20 +443,20 @@ def _partition_words(
 
 
 def _word_sort_key(word: object) -> tuple[float, float]:
-    if not isinstance(word, Mapping):
+    if not is_object_mapping(word):
         return (float("inf"), float("inf"))
     try:
-        start = float(word.get("start", float("inf")))
+        start = coerce_float(word.get("start", float("inf")))
     except (TypeError, ValueError):
         start = float("inf")
     try:
-        end = float(word.get("end", start))
+        end = coerce_float(word.get("end", start))
     except (TypeError, ValueError):
         end = start
     return (start, end)
 
 
-def _set_manual_flags(segment: dict[str, Any], changes: Mapping[str, Any]) -> None:
+def _set_manual_flags(segment: dict[object, object], changes: Mapping[object, object]) -> None:
     if "text" in changes:
         segment["manual_text"] = True
     if "start" in changes or "end" in changes:
@@ -456,13 +471,20 @@ def _set_manual_flags(segment: dict[str, Any], changes: Mapping[str, Any]) -> No
         segment["manual_font_family"] = True
 
 
-def _require_object(value: object, field: str) -> None:
-    if not isinstance(value, Mapping):
+def _require_object(value: object, field: str) -> Mapping[object, object]:
+    if not is_object_mapping(value):
         raise EditProposalError(f"{field} must be an object")
+    return value
 
 
-def _reject_unknown(value: Mapping[str, Any], allowed: set[str], field: str) -> None:
-    unknown = sorted(set(value) - allowed)
+def _segment_at(segments: list[object], index: int) -> dict[object, object]:
+    segment = segments[index]
+    if not is_object_dict(segment):
+        raise EditProposalError("segment must be an object")
+    return segment
+
+
+def _reject_unknown(value: Mapping[object, object], allowed: set[str], field: str) -> None:
+    unknown = sorted(str(key) for key in value if key not in allowed)
     if unknown:
         raise EditProposalError(f"{field} contains unsupported fields: {', '.join(unknown)}")
-

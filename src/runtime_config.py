@@ -46,7 +46,7 @@ def resolve_option(
 
 
 def resolve_list_option(
-    value: list[str] | None, config: Mapping[str, object], key: str, default: list[str] | None = None
+    value: object, config: Mapping[str, object], key: str, default: list[str] | None = None
 ) -> list[str]:
     resolved = resolve_option(value, config, key, default)
     if resolved is None:
@@ -61,3 +61,55 @@ def resolve_bool_option(value: bool | None, config: Mapping[str, object], key: s
     if isinstance(resolved, bool):
         return resolved
     raise SystemExit(f"Config value '{key}' must be true or false.")
+
+
+def resolve_string_option(
+    value: str | None, config: Mapping[str, object], key: str, default: str | None = None
+) -> str | None:
+    resolved = resolve_option(value, config, key, default)
+    if resolved is None or isinstance(resolved, str):
+        return resolved
+    raise SystemExit(f"Config value '{key}' must be a string or null.")
+
+
+def resolve_required_string_option(value: str | None, config: Mapping[str, object], key: str, default: str) -> str:
+    resolved = resolve_string_option(value, config, key, default)
+    if resolved is None:
+        raise SystemExit(f"Config value '{key}' must be a string.")
+    return resolved
+
+
+def resolve_integer_option(
+    value: int | None, config: Mapping[str, object], key: str, default: int | None = None
+) -> int | None:
+    resolved = resolve_option(value, config, key, default)
+    if resolved is None or type(resolved) is int:
+        return resolved
+    raise SystemExit(f"Config value '{key}' must be an integer or null.")
+
+
+def resolve_required_integer_option(value: int | None, config: Mapping[str, object], key: str, default: int) -> int:
+    resolved = resolve_integer_option(value, config, key, default)
+    if resolved is None:
+        raise SystemExit(f"Config value '{key}' must be an integer.")
+    return resolved
+
+
+def resolve_number_option(
+    value: float | None, config: Mapping[str, object], key: str, default: float | None = None
+) -> float | None:
+    resolved = resolve_option(value, config, key, default)
+    if resolved is None:
+        return None
+    if isinstance(resolved, (int, float)) and not isinstance(resolved, bool):
+        return float(resolved)
+    raise SystemExit(f"Config value '{key}' must be a number or null.")
+
+
+def resolve_required_number_option(
+    value: float | None, config: Mapping[str, object], key: str, default: float
+) -> float:
+    resolved = resolve_number_option(value, config, key, default)
+    if resolved is None:
+        raise SystemExit(f"Config value '{key}' must be a number.")
+    return resolved

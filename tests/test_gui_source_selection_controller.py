@@ -5,9 +5,10 @@ import unittest
 from pathlib import Path
 
 from src.gui_source_selection_controller import SourceSelectionController
+from tests.typed_case import TypedTestCase
 
 
-class SourceSelectionControllerTests(unittest.TestCase):
+class SourceSelectionControllerTests(TypedTestCase):
     @staticmethod
     def _validator(source: Path, required_streams: set[str], _label: str) -> tuple[bool, str]:
         extension = source.suffix.lower()

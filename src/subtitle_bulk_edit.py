@@ -3,8 +3,10 @@ from __future__ import annotations
 import re
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from typing import TypedDict
 
+from .data_boundary import coerce_float, is_object_dict, is_object_iterable, is_object_sequence
 from .subtitle_project import SubtitleProjectError, validate_project
 
 
@@ -29,43 +31,68 @@ class BulkEditQuery:
 class BulkEditAction:
     text_replace_from: str | None = None
     text_replace_to: str = ""
-    speaker_rename: Mapping[str, str] = None  # type: ignore[assignment]
-    style: Mapping[str, Any] = None  # type: ignore[assignment]
+    speaker_rename: Mapping[str, str] | None = None
+    style: Mapping[str, object] | None = None
     time_shift: float = 0.0
+
+
+class BulkEditChange(TypedDict):
+    id: str
+    before: dict[object, object]
+    after: dict[object, object]
 
 
 @dataclass(frozen=True)
 class BulkEditPreview:
     segment_ids: tuple[str, ...]
-    changes: tuple[dict[str, Any], ...]
+    changes: tuple[BulkEditChange, ...]
 
 
 @dataclass(frozen=True)
 class BulkEditResult:
-    project: dict[str, Any]
+    project: dict[object, object]
     preview: BulkEditPreview
-    before: dict[str, Any]
-    after: dict[str, Any]
+    before: dict[object, object]
+    after: dict[object, object]
+
+
+def _project_segments(project: Mapping[object, object]) -> list[dict[object, object]]:
+    value = project.get("segments", [])
+    if not is_object_sequence(value) or isinstance(value, (str, bytes)):
+        raise BulkEditError("segments must be an array")
+    segments: list[dict[object, object]] = []
+    for segment in value:
+        if not is_object_dict(segment):
+            raise BulkEditError("segment must be an object")
+        segments.append(segment)
+    return segments
+
+
+def _review_rule_ids(segment: Mapping[object, object]) -> set[str]:
+    values = segment.get("review_rule_ids", [])
+    if not is_object_iterable(values):
+        raise BulkEditError("review_rule_ids must be iterable")
+    return {str(item) for item in values}
 
 
 def find_matching_segment_ids(
-    project: Mapping[str, Any],
+    project: Mapping[object, object],
     query: BulkEditQuery,
 ) -> list[str]:
     pattern = _compile_pattern(query)
     result: list[str] = []
-    for segment in project.get("segments", []):
+    for segment in _project_segments(project):
         segment_id = str(segment.get("id", ""))
         text = str(segment.get("text", ""))
         if query.segment_ids and segment_id not in query.segment_ids:
             continue
         if query.speaker and str(segment.get("speaker", "")) != query.speaker:
             continue
-        if query.start is not None and float(segment.get("end", 0.0)) <= query.start:
+        if query.start is not None and coerce_float(segment.get("end", 0.0)) <= query.start:
             continue
-        if query.end is not None and float(segment.get("start", 0.0)) >= query.end:
+        if query.end is not None and coerce_float(segment.get("start", 0.0)) >= query.end:
             continue
-        if query.review_rule_id and query.review_rule_id not in {str(item) for item in segment.get("review_rule_ids", [])}:
+        if query.review_rule_id and query.review_rule_id not in _review_rule_ids(segment):
             continue
         if pattern is not None and not _matches(text, query, pattern):
             continue
@@ -74,7 +101,7 @@ def find_matching_segment_ids(
 
 
 def preview_bulk_edit(
-    project: Mapping[str, Any],
+    project: Mapping[object, object],
     query: BulkEditQuery,
     action: BulkEditAction,
     *,
@@ -82,8 +109,8 @@ def preview_bulk_edit(
 ) -> BulkEditPreview:
     ids = find_matching_segment_ids(project, query)
     excluded = {str(item) for item in excluded_segment_ids}
-    changes: list[dict[str, Any]] = []
-    by_id = {str(item.get("id")): item for item in project.get("segments", [])}
+    changes: list[BulkEditChange] = []
+    by_id = {str(item.get("id")): item for item in _project_segments(project)}
     for segment_id in ids:
         if segment_id in excluded:
             continue
@@ -95,17 +122,17 @@ def preview_bulk_edit(
 
 
 def apply_bulk_edit(
-    project: Mapping[str, Any],
+    project: Mapping[object, object],
     query: BulkEditQuery,
     action: BulkEditAction,
     *,
     excluded_segment_ids: Iterable[str] = (),
-    cancel_check: callable | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> BulkEditResult:
     before = deepcopy(dict(project))
     preview = preview_bulk_edit(before, query, action, excluded_segment_ids=excluded_segment_ids)
     candidate = deepcopy(before)
-    by_id = {str(item.get("id")): item for item in candidate.get("segments", [])}
+    by_id = {str(item.get("id")): item for item in _project_segments(candidate)}
     for index, segment_id in enumerate(preview.segment_ids):
         if cancel_check and cancel_check():
             raise BulkEditError("bulk edit cancelled")
@@ -135,10 +162,10 @@ def _matches(text: str, query: BulkEditQuery, pattern: re.Pattern[str]) -> bool:
 
 
 def _apply_to_segment(
-    segment: Mapping[str, Any],
+    segment: Mapping[object, object],
     action: BulkEditAction,
     query: BulkEditQuery,
-) -> dict[str, Any]:
+) -> dict[object, object]:
     updated = deepcopy(dict(segment))
     if action.text_replace_from is not None:
         try:
@@ -167,8 +194,7 @@ def _apply_to_segment(
             raise BulkEditError(f"unsupported style field: {key}")
         updated[key] = value
     if action.time_shift:
-        updated["start"] = float(updated.get("start", 0.0)) + action.time_shift
-        updated["end"] = float(updated.get("end", 0.0)) + action.time_shift
+        updated["start"] = coerce_float(updated.get("start", 0.0)) + action.time_shift
+        updated["end"] = coerce_float(updated.get("end", 0.0)) + action.time_shift
         updated["manual_timing"] = True
     return updated
-

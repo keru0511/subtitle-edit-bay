@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from src.data_boundary import is_object_mapping
 from src.transcript_cache import (
     build_transcript_cache_fingerprint,
     read_transcript_cache_metadata,
@@ -12,9 +13,10 @@ from src.transcript_cache import (
     transcript_cache_metadata_path,
     write_transcript_cache_metadata,
 )
+from tests.typed_case import TypedTestCase
 
 
-class TranscriptCacheTests(unittest.TestCase):
+class TranscriptCacheTests(TypedTestCase):
     def test_fingerprint_changes_with_asr_context_and_dictionary_inputs(self) -> None:
         base = build_transcript_cache_fingerprint(
             model="large-v3",
@@ -100,7 +102,11 @@ class TranscriptCacheTests(unittest.TestCase):
 
             self.assertEqual(metadata_path, transcript_cache_metadata_path(transcript))
             self.assertTrue(transcript_cache_is_valid(transcript, expected_fingerprint=expected))
-            self.assertEqual(read_transcript_cache_metadata(transcript)["settings"]["model"], "large-v3")
+            metadata = read_transcript_cache_metadata(transcript)
+            assert metadata is not None
+            settings = metadata["settings"]
+            assert is_object_mapping(settings)
+            self.assertEqual(settings["model"], "large-v3")
             self.assertFalse(transcript_cache_is_valid(transcript, expected_fingerprint="different"))
 
     def test_invalid_metadata_is_treated_as_cache_miss(self) -> None:

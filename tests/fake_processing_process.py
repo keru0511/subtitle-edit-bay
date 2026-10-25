@@ -7,12 +7,19 @@ import time
 from pathlib import Path
 
 
+class _FakeProcessingArgs(argparse.Namespace):
+    mode: str
+    template: str | None
+    project_path: str | None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("wait", "fail", "success"), required=True)
     parser.add_argument("--template")
     parser.add_argument("--project-path")
-    args = parser.parse_args()
+    args = _FakeProcessingArgs()
+    parser.parse_args(namespace=args)
 
     print("[subtitle_workflow] Starting WhisperX", flush=True)
     if args.mode == "wait":

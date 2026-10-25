@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import json
 import os
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
 
 from src.application_logging import (
     ApplicationLogger,
@@ -14,11 +16,26 @@ from src.application_logging import (
     default_log_directory,
     redact_text,
 )
+from src.data_boundary import decode_json, is_string_object_mapping
+from tests.typed_case import TypedTestCase
 
 
-class ApplicationLoggingTests(unittest.TestCase):
+@contextmanager
+def patched_environment(values: Mapping[str, str], *, clear: bool = False) -> Iterator[None]:
+    original = dict(os.environ)
+    try:
+        if clear:
+            os.environ.clear()
+        os.environ.update(values)
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(original)
+
+
+class ApplicationLoggingTests(TypedTestCase):
     def test_default_directory_matches_installer_launcher_contract(self) -> None:
-        with patch.dict(os.environ, {"LOCALAPPDATA": "C:/LocalAppData"}):
+        with patched_environment({"LOCALAPPDATA": "C:/LocalAppData"}):
             self.assertEqual(
                 default_log_directory("C:/workspace"),
                 Path("C:/LocalAppData") / "Subtitle Edit Bay" / "logs",
@@ -56,6 +73,42 @@ class ApplicationLoggingTests(unittest.TestCase):
             self.assertNotIn(secret, redacted)
         self.assertIn("next=ok", redacted)
 
+    def test_path_redaction_handles_many_separators_without_hanging(self) -> None:
+        program = """
+from src.application_logging import redact_text
+from src.codex_runtime import redact_codex_diagnostic
+
+for value in ("/" + "!/" * 20_000, "/" + "!/" * 20_000 + "file.json"):
+    assert redact_text(value, paths=True) == "<local-path>"
+    assert redact_codex_diagnostic(value) == "<local-path>"
+"""
+        completed = subprocess.run(
+            [sys.executable, "-c", program],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_path_redaction_preserves_trailing_diagnostic_text(self) -> None:
+        for path in ("/tmp/codex.json", "/home/Alice/My Projects/cache.dir/codex.json"):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    redact_text(f"Failed to read {path}: SDK v1.2.3", paths=True),
+                    "Failed to read <local-path>: SDK v1.2.3",
+                )
+
+    def test_path_redaction_masks_unix_paths_with_punctuation(self) -> None:
+        for separator in "<>|?*":
+            with self.subTest(separator=separator):
+                self.assertEqual(
+                    redact_text(f"Failed to read /home/Alice{separator}private/cache", paths=True),
+                    "Failed to read <local-path>",
+                )
+
     def test_structured_file_and_bounded_memory_are_written(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             logger = ApplicationLogger(
@@ -73,7 +126,11 @@ class ApplicationLoggingTests(unittest.TestCase):
             logger.append("token=do-not-store " + ("x" * 2_000), severity="ERROR")
 
             self.assertLessEqual(len(logger.text), 1_000)
-            records = [json.loads(line) for line in logger.log_path.read_text(encoding="utf-8").splitlines()]
+            records: list[Mapping[str, object]] = []
+            for line in logger.log_path.read_text(encoding="utf-8").splitlines():
+                record = decode_json(line)
+                assert is_string_object_mapping(record)
+                records.append(record)
             self.assertEqual(records[0]["component"], "ffmpeg")
             self.assertEqual(records[0]["process_id"], 42)
             self.assertNotIn("do-not-store", logger.log_path.read_text(encoding="utf-8"))
@@ -230,17 +287,17 @@ class ApplicationLoggingTests(unittest.TestCase):
             self.assertNotIn(r"C:\private", diagnostic)
 
 
-class PlatformPathTests(unittest.TestCase):
-    def test_log_fallback_preserves_existing_workspace_location(self):
-        with patch.dict(os.environ, {}, clear=True):
+class PlatformPathTests(TypedTestCase):
+    def test_log_fallback_preserves_existing_workspace_location(self) -> None:
+        with patched_environment({}, clear=True):
             self.assertEqual(default_log_directory("workspace"), Path("workspace/.local/logs"))
 
-    def test_update_cache_uses_existing_environment_priority(self):
+    def test_update_cache_uses_existing_environment_priority(self) -> None:
         from src.platform_paths import update_directory
 
-        with patch.dict(os.environ, {"LOCALAPPDATA": "/local", "XDG_CACHE_HOME": "/cache"}, clear=True):
+        with patched_environment({"LOCALAPPDATA": "/local", "XDG_CACHE_HOME": "/cache"}, clear=True):
             self.assertEqual(update_directory(), Path("/local/SubtitleEditBay/updates"))
-        with patch.dict(os.environ, {"XDG_CACHE_HOME": "/cache"}, clear=True):
+        with patched_environment({"XDG_CACHE_HOME": "/cache"}, clear=True):
             self.assertEqual(update_directory(), Path("/cache/SubtitleEditBay/updates"))
 
 

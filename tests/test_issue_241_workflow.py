@@ -9,11 +9,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src.burn_subs import build_ffmpeg_command
+from src.data_boundary import is_object_list, is_string_object_mapping
 from src.subtitle_project import create_project, load_project, save_project
 from src.subtitle_workflow import render_project_video
+from tests.typed_case import TypedTestCase
 
 
-class Issue241WorkflowTests(unittest.TestCase):
+class Issue241WorkflowTests(TypedTestCase):
     def test_empty_project_is_a_valid_editable_project(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -34,7 +36,11 @@ class Issue241WorkflowTests(unittest.TestCase):
 
             loaded = load_project(project_path)
             self.assertEqual(loaded["segments"], [])
-            self.assertEqual(loaded["audio_sources"][0]["path"], str(audio))
+            audio_sources = loaded["audio_sources"]
+            assert is_object_list(audio_sources)
+            first_source = audio_sources[0]
+            assert is_string_object_mapping(first_source)
+            self.assertEqual(first_source["path"], str(audio))
 
     def test_empty_project_render_skips_ass_generation_and_filter(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -53,7 +59,9 @@ class Issue241WorkflowTests(unittest.TestCase):
             ):
                 render_project_video(project_path, audio_normalize=False)
 
-            self.assertIsNone(burn.call_args.args[1])
+            call_arguments: object = burn.call_args.args
+            assert isinstance(call_arguments, tuple)
+            self.assertIsNone(call_arguments[1])
 
     def test_ffmpeg_command_without_subtitle_has_no_video_filter(self) -> None:
         command = build_ffmpeg_command(
@@ -80,19 +88,26 @@ class Issue241WorkflowTests(unittest.TestCase):
         self.assertNotIn("0:a:0", command)
         self.assertNotIn("-c:a", command)
 
-    @unittest.skipUnless(
-        shutil.which("ffmpeg") and shutil.which("ffprobe"),
-        "ffmpeg and ffprobe required",
-    )
     def test_video_only_project_renders_without_audio_stream(self) -> None:
+        if not (shutil.which("ffmpeg") and shutil.which("ffprobe")):
+            self.skipTest("ffmpeg and ffprobe required")
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             video = root / "video-only.mkv"
             subprocess.run(
                 [
-                    "ffmpeg", "-y",
-                    "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=15:duration=1",
-                    "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video),
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=size=320x180:rate=15:duration=1",
+                    "-an",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    str(video),
                 ],
                 check=True,
                 capture_output=True,
@@ -112,17 +127,29 @@ class Issue241WorkflowTests(unittest.TestCase):
 
             probe = subprocess.run(
                 [
-                    "ffprobe", "-v", "error", "-show_entries", "stream=codec_type",
-                    "-of", "json", str(output),
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "stream=codec_type",
+                    "-of",
+                    "json",
+                    str(output),
                 ],
                 check=True,
                 capture_output=True,
                 text=True,
             )
-            self.assertEqual(
-                [stream["codec_type"] for stream in json.loads(probe.stdout)["streams"]],
-                ["video"],
-            )
+            payload: object = json.loads(probe.stdout)
+            assert is_string_object_mapping(payload)
+            streams = payload["streams"]
+            assert is_object_list(streams)
+            codec_types: list[object] = []
+            for stream in streams:
+                assert is_string_object_mapping(stream)
+                codec_types.append(stream["codec_type"])
+            self.assertEqual(codec_types, ["video"])
+
 
 if __name__ == "__main__":
     unittest.main()

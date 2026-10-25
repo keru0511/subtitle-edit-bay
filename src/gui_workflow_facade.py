@@ -3,18 +3,19 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import subprocess
+from collections.abc import Mapping, Sequence
+import traceback
 from copy import deepcopy
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 from PySide6.QtCore import (
-    Property,
     QProcess,
-    Signal,
-    Slot,
 )
 
+from .qt_decorators import Property, Signal, Slot
+from .data_boundary import coerce_float, coerce_int, is_string_object_mapping
 from .gui_state import build_gui_transcribe_command
 from .workflow_actions import (
     ActionCapability,
@@ -24,15 +25,32 @@ from .workflow_actions import (
 )
 from .subtitle_project import (
     SubtitleProjectError,
-    assign_project_layout_rows,
     project_work_directory,
 )
-from .processing_progress import parse_ffmpeg_timestamp, parse_progress_events
+from .application_logging import ProcessDiagnosticSnapshot
+from .processing_progress import ProcessingProgress, parse_ffmpeg_timestamp, parse_progress_events
 
 from .gui_feature_facade import FeatureFacade
 
 if TYPE_CHECKING:
     from .gui import EditBayBackend
+
+
+@dataclass(slots=True)
+class WorkflowRuntimeState:
+    """実行中の処理と文字起こし結果の統合に必要な一時状態。"""
+
+    processing_progress: ProcessingProgress = field(default_factory=ProcessingProgress)
+    ffmpeg_duration_seconds: float = 0.0
+    ffmpeg_duration_from_event: bool = False
+    processing_machine_event_seen: bool = False
+    last_process_diagnostic: ProcessDiagnosticSnapshot | None = None
+    pending_process_error: str = ""
+    process_output_tail: str = ""
+    transcription_merge_mode: str = ""
+    transcription_preserved_project: dict[str, object] | None = None
+    transcription_preserved_project_path: str = ""
+    transcription_generated_project_path: str = ""
 
 
 class WorkflowFacade(FeatureFacade):
@@ -45,10 +63,15 @@ class WorkflowFacade(FeatureFacade):
 
     def __init__(self, backend: "EditBayBackend") -> None:
         super().__init__(backend)
+        self._state = WorkflowRuntimeState()
         backend.actionCapabilitiesChanged.connect(self.actionCapabilitiesChanged.emit)
         backend.activeJobChanged.connect(self.activeJobChanged.emit)
         backend.assPathChanged.connect(self.assPathChanged.emit)
         backend.progressDetailsChanged.connect(self.progressDetailsChanged.emit)
+
+    @property
+    def processing_progress(self) -> ProcessingProgress:
+        return self._state.processing_progress
 
     @Property(str, notify=activeJobChanged)
     def activeJob(self) -> str:
@@ -56,37 +79,31 @@ class WorkflowFacade(FeatureFacade):
         return backend._active_job
 
     @Property("QVariantList", notify=progressDetailsChanged)
-    def progressSteps(self) -> list[dict[str, Any]]:
-        backend = self._backend
-        return backend._processing_progress.as_list()
+    def progressSteps(self) -> list[dict[str, object]]:
+        return self._state.processing_progress.as_list()
 
     @Property(int, notify=progressDetailsChanged)
     def progressPercent(self) -> int:
-        backend = self._backend
-        return int(round(backend._processing_progress.value * 100))
+        return int(round(self._state.processing_progress.value * 100))
 
     @Property(str, notify=progressDetailsChanged)
     def progressCurrentStep(self) -> str:
-        backend = self._backend
-        return backend._processing_progress.current_step
+        return self._state.processing_progress.current_step
 
     @Property(str, notify=progressDetailsChanged)
     def progressCurrentStepDisplay(self) -> str:
-        backend = self._backend
-        for step in backend._processing_progress.as_list():
-            if step["id"] == backend._processing_progress.current_step:
+        for step in self._state.processing_progress.as_list():
+            if step["id"] == self._state.processing_progress.current_step:
                 return str(step["label"])
         return ""
 
     @Property(str, notify=progressDetailsChanged)
     def progressState(self) -> str:
-        backend = self._backend
-        return backend._processing_progress.status
+        return self._state.processing_progress.status
 
     @Property(bool, notify=progressDetailsChanged)
     def progressVisible(self) -> bool:
-        backend = self._backend
-        return bool(backend._processing_progress.steps)
+        return bool(self._state.processing_progress.steps)
 
     @Property(str, notify=assPathChanged)
     def assPath(self) -> str:
@@ -94,7 +111,7 @@ class WorkflowFacade(FeatureFacade):
         return backend._ass_path
 
     @Slot("QVariantMap", str)
-    def transcribeProject(self, settings: dict[str, Any], mode: str) -> None:
+    def transcribeProject(self, settings: dict[str, object], mode: str) -> None:
         backend = self._backend
         if backend._running:
             return
@@ -102,18 +119,15 @@ class WorkflowFacade(FeatureFacade):
         if selected_mode not in {"replace", "merge"}:
             backend._set_status("文字起こし結果の取り込み方法を選択してください", "CHECK")
             return
-        if backend._project is None:
+        if self.project_editor.project is None:
             self._reset_transcription_integration_state()
             self.startTranscription(settings, False)
             return
         if not backend.saveProject():
             return
-        backend._transcription_merge_mode = selected_mode
-        backend._transcription_preserved_project = deepcopy(backend._project)
-        backend._transcription_preserved_project_path = backend._project_path
-        backend._transcription_preserved_segments = (
-            deepcopy(backend._project.get("segments", [])) if selected_mode == "merge" else []
-        )
+        self._state.transcription_merge_mode = selected_mode
+        self._state.transcription_preserved_project = deepcopy(self.project_editor.project)
+        self._state.transcription_preserved_project_path = self.project_editor.project_path
         default_project_path = backend._default_project_path()
         if default_project_path is None:
             self._reset_transcription_integration_state()
@@ -124,73 +138,28 @@ class WorkflowFacade(FeatureFacade):
         )
         self.startTranscription(settings, True, str(generated_project_path))
 
-    def _merge_preserved_transcription_segments(self) -> bool:
-        backend = self._backend
-        if backend._project is None or backend._transcription_preserved_project is None:
-            return False
-        generated = deepcopy(backend._project)
-        preserved = deepcopy(backend._transcription_preserved_project)
-        generated_segments = deepcopy(generated.get("segments", []))
-        if backend._transcription_merge_mode == "merge":
-            preserved_segments = deepcopy(preserved.get("segments", []))
-            used_ids = {str(item.get("id", "")) for item in preserved_segments}
-            merged = list(preserved_segments)
-            for segment in generated_segments:
-                segment_id = str(segment.get("id", ""))
-                if not segment_id or segment_id in used_ids:
-                    segment["id"] = f"transcribed-{uuid4().hex[:12]}"
-                used_ids.add(str(segment["id"]))
-                merged.append(segment)
-            segments = merged
-        elif backend._transcription_merge_mode == "replace":
-            segments = generated_segments
-        else:
-            return False
+    def _publish_integrated_transcription_project(self, project: dict[str, object]) -> None:
+        """正本確定後に、プロジェクト依存の画面状態を更新する。"""
 
-        preserved["segments"] = assign_project_layout_rows(
-            sorted(segments, key=lambda item: (item["start"], item["end"], item["id"]))
-        )
-        for key in ("transcription", "transcription_context", "waveforms"):
-            if key in generated:
-                preserved[key] = deepcopy(generated[key])
-        backend._project = preserved
-        preserved_project_path = backend._transcription_preserved_project_path or backend._project_path
-        backend._project_path = preserved_project_path
-        backend._apply_project_subtitle_settings(backend._project)
-        backend._selected_segment_index = 0 if backend._project["segments"] else -1
-        backend._project_editor_controller.save(preserved_project_path, emit=False)
-        backend._project_dirty = False
-        backend.workspace._sync_project_timeline()
-        backend.subtitles._sync_subtitle_model()
-        backend.projectChanged.emit()
-        backend.projectDataChanged.emit()
-        backend.segmentsChanged.emit()
-        backend.selectionChanged.emit()
-        return True
-
-    def _restore_preserved_transcription_project(self) -> None:
         backend = self._backend
-        if backend._transcription_preserved_project is None:
-            return
-        backend._project = deepcopy(backend._transcription_preserved_project)
-        backend._project_path = backend._transcription_preserved_project_path
-        backend._apply_project_subtitle_settings(backend._project)
-        backend._project_editor_controller.save(backend._project_path, emit=False)
-        backend._project_dirty = False
-        backend._selected_segment_index = 0 if backend._project.get("segments") else -1
-        backend.subtitles._sync_subtitle_model()
+        was_audio_proposal_running = backend._codex_audio_mix_session.running
+        backend._codex_audio_mix_session.stop()
+        if was_audio_proposal_running:
+            backend._codex_chat.fail_proposal("", cancelled=True)
+        backend._audio_mix_proposal = None
+        backend.audioMixProposalChanged.emit()
+        backend._apply_project_subtitle_settings(project)
+        backend._audio_preview_controller.set_project(project)
+        backend._reset_audio_preview_cache()
         backend.workspace._sync_project_timeline()
-        backend.projectChanged.emit()
-        backend.projectDataChanged.emit()
-        backend.segmentsChanged.emit()
-        backend.selectionChanged.emit()
+        self.project_editor.publish_loaded()
 
     def _cleanup_transcription_project_artifact(self) -> None:
         backend = self._backend
-        if not backend._transcription_generated_project_path:
+        if not self._state.transcription_generated_project_path:
             return
         try:
-            Path(backend._transcription_generated_project_path).unlink(missing_ok=True)
+            Path(self._state.transcription_generated_project_path).unlink(missing_ok=True)
         except OSError as error:
             backend._record_log(
                 f"一時文字起こしプロジェクトを削除できません: {error}",
@@ -200,50 +169,51 @@ class WorkflowFacade(FeatureFacade):
                 stage="CLEANUP",
             )
         finally:
-            backend._transcription_generated_project_path = ""
+            self._state.transcription_generated_project_path = ""
 
-    def _reset_transcription_integration_state(self) -> None:
-        backend = self._backend
-        self._cleanup_transcription_project_artifact()
-        backend._transcription_merge_mode = ""
-        backend._transcription_preserved_segments = []
-        backend._transcription_preserved_project = None
-        backend._transcription_preserved_project_path = ""
+    def _reset_transcription_integration_state(self, *, preserve_generated_artifact: bool = False) -> None:
+        if preserve_generated_artifact:
+            self._state.transcription_generated_project_path = ""
+        else:
+            self._cleanup_transcription_project_artifact()
+        self._state.transcription_merge_mode = ""
+        self._state.transcription_preserved_project = None
+        self._state.transcription_preserved_project_path = ""
 
     def _start_command(self, command: list[str], job: str, status: str) -> None:
         backend = self._backend
         backend._active_job = job
         backend.activeJobChanged.emit()
         skip_steps: set[str] = set()
-        if job == "render" and backend._project is not None:
-            segments = backend._project.get("segments", ())
+        if job == "render" and self.project_editor.project is not None:
+            segments = self.project_editor.project.get("segments", ())
             if not isinstance(segments, (list, tuple)) or not segments:
                 skip_steps.add("subtitle")
-        backend._processing_progress.start(job, skip_steps=skip_steps)
+        self._state.processing_progress.start(job, skip_steps=skip_steps)
         backend.progressDetailsChanged.emit()
-        if backend._last_process_diagnostic is not None:
-            backend._last_process_diagnostic = None
+        if self._state.last_process_diagnostic is not None:
+            self._state.last_process_diagnostic = None
             backend.lastProcessDiagnosticChanged.emit()
-        backend._pending_process_error = ""
-        backend._process_output_tail = ""
+        self._state.pending_process_error = ""
+        self._state.process_output_tail = ""
         backend._record_log(
             f"> {subprocess.list2cmdline(command)}",
             component="gui",
             job=job,
             stage="STARTING",
         )
-        backend._progress = backend._processing_progress.value if backend._processing_progress.steps else 0.02
+        backend._progress = self._state.processing_progress.value if self._state.processing_progress.steps else 0.02
         backend.progressChanged.emit()
-        backend._ffmpeg_duration_seconds = 0.0
-        backend._ffmpeg_duration_from_event = False
-        backend._processing_machine_event_seen = False
+        self._state.ffmpeg_duration_seconds = 0.0
+        self._state.ffmpeg_duration_from_event = False
+        self._state.processing_machine_event_seen = False
         backend._elapsed_seconds = 0
         backend._cancel_requested = False
         backend.elapsedChanged.emit()
         backend._set_status(status, "STARTING")
         backend._start_process(command)
 
-    def _has_audio_source(self, audio_files: list[str], audio_tracks: list[dict[str, Any]] | None = None) -> bool:
+    def _has_audio_source(self, audio_files: list[str], audio_tracks: Sequence[Mapping[str, object]] | None = None) -> bool:
         backend = self._backend
         if audio_files:
             return True
@@ -253,7 +223,7 @@ class WorkflowFacade(FeatureFacade):
                 return True
         return False
 
-    def _default_video_audio_track(self, audio_tracks: list[dict[str, Any]] | None = None) -> str:
+    def _default_video_audio_track(self, audio_tracks: Sequence[Mapping[str, object]] | None = None) -> str:
         backend = self._backend
         tracks = audio_tracks if audio_tracks is not None else backend._audio_tracks
         for track in tracks:
@@ -274,24 +244,24 @@ class WorkflowFacade(FeatureFacade):
         )
 
     @Property("QVariantMap", notify=actionCapabilitiesChanged)
-    def actionCapabilities(self) -> dict[str, Any]:
+    def actionCapabilities(self) -> dict[str, object]:
         backend = self._backend
         return self.actionCapabilitiesForDevice(str(backend._settings.get("device", "cuda")))
 
     @Slot(str, result="QVariantMap")
-    def actionCapabilitiesForDevice(self, device: str) -> dict[str, Any]:
+    def actionCapabilitiesForDevice(self, device: str) -> dict[str, object]:
         backend = self._backend
         transcribe = self._transcription_capability(device)
         normal = render_capability(
             backend._dependencies,
-            backend._project,
-            backend._project_path,
+            self.project_editor.project,
+            self.project_editor.project_path,
             running=backend._running,
         )
         short = render_capability(
             backend._dependencies,
-            backend._project,
-            backend._project_path,
+            self.project_editor.project,
+            self.project_editor.project_path,
             short=True,
             running=backend._running,
         )
@@ -301,8 +271,8 @@ class WorkflowFacade(FeatureFacade):
                 not backend.videoOutputDirectory
                 and render_capability(
                     backend._dependencies,
-                    backend._project,
-                    backend._project_path,
+                    self.project_editor.project,
+                    self.project_editor.project_path,
                     short=is_short,
                     running=backend._running,
                     require_output=False,
@@ -324,7 +294,7 @@ class WorkflowFacade(FeatureFacade):
     @Slot("QVariantMap", bool)
     def startTranscription(
         self,
-        settings: dict[str, Any],
+        settings: dict[str, object],
         overwrite_project: bool = False,
         project_path: str | None = None,
     ) -> None:
@@ -353,23 +323,30 @@ class WorkflowFacade(FeatureFacade):
         video_audio_track = ""
         if not audio_files:
             video_audio_track = str(settings.get("reference_track") or self._default_video_audio_track(audio_tracks))
-        reference_audio = settings.get("reference_audio")
-        if not reference_audio and audio_files:
+        reference_audio_value = settings.get("reference_audio")
+        reference_audio = str(reference_audio_value) if reference_audio_value else None
+        if reference_audio is None and audio_files:
             reference_audio = audio_files[0]
         reference_track = str(settings.get("reference_track") or "")
-        adjustment = float(settings.get("alignment_offset_adjustment") or 0.0)
-        backend.saveSettings(settings)
-        backend._transcription_generated_project_path = str(Path(project_path).resolve()) if project_path else ""
+        adjustment = coerce_float(settings.get("alignment_offset_adjustment") or 0.0)
+        if not backend.saveSettings(settings):
+            if project_path is not None:
+                self._reset_transcription_integration_state()
+            return
+        self._state.transcription_generated_project_path = str(Path(project_path).resolve()) if project_path else ""
+        project_transcription = (self.project_editor.project or {}).get("transcription")
+        context_base_dir = (
+            project_transcription.get("context_base_dir")
+            if is_string_object_mapping(project_transcription)
+            else None
+        )
         command = build_gui_transcribe_command(
             backend.gui_config_path,
             video=selection.video,
             audio_files=audio_files,
             output_dir=str(project_work_directory(backend.projectSavePath)),
             render_output_dir=backend.videoOutputDirectory,
-            context_base_dir=str(
-                (backend._project or {}).get("transcription", {}).get("context_base_dir")
-                or Path(backend.projectSavePath).parent
-            ),
+            context_base_dir=str(context_base_dir or Path(backend.projectSavePath).parent),
             reference_audio=reference_audio,
             reference_track=reference_track,
             video_audio_track=video_audio_track,
@@ -380,22 +357,22 @@ class WorkflowFacade(FeatureFacade):
         self._start_command(command, "transcribe", "文字起こしを開始しています")
 
     @Slot("QVariantMap")
-    def startProcessing(self, settings: dict[str, Any]) -> None:
+    def startProcessing(self, settings: dict[str, object]) -> None:
         self.startTranscription(settings)
 
     @Slot("QVariantMap")
-    def renderVideo(self, settings: dict[str, Any]) -> None:
+    def renderVideo(self, settings: dict[str, object]) -> None:
         self._start_render(settings, short=False)
 
-    def _start_render(self, settings: dict[str, Any], *, short: bool) -> None:
+    def _start_render(self, settings: dict[str, object], *, short: bool) -> None:
         backend = self._backend
-        if backend._running or backend._project is None:
+        if backend._running or self.project_editor.project is None:
             return
         backend.refreshDependencies()
         preflight = render_capability(
             backend._dependencies,
-            backend._project,
-            backend._project_path,
+            self.project_editor.project,
+            self.project_editor.project_path,
             short=short,
             require_output=False,
         )
@@ -410,8 +387,8 @@ class WorkflowFacade(FeatureFacade):
         try:
             request = prepare_render_request(
                 backend._dependencies,
-                backend._project,
-                backend._project_path,
+                self.project_editor.project,
+                self.project_editor.project_path,
                 backend.gui_config_path,
                 short=short,
             )
@@ -420,7 +397,8 @@ class WorkflowFacade(FeatureFacade):
             return
         effective_settings = dict(settings)
         effective_settings["video_codec"] = request.video_codec
-        backend.saveSettings(effective_settings)
+        if not backend.saveSettings(effective_settings):
+            return
         backend._update_project_settings(effective_settings)
         if not backend.saveProject():
             return
@@ -457,7 +435,7 @@ class WorkflowFacade(FeatureFacade):
         if not data:
             return
         normalized = data.replace("\r", "\n")
-        backend._process_output_tail = (backend._process_output_tail + normalized)[-50_000:]
+        self._state.process_output_tail = (self._state.process_output_tail + normalized)[-50_000:]
         backend._record_log(
             normalized,
             component=backend._active_job or "process",
@@ -469,27 +447,27 @@ class WorkflowFacade(FeatureFacade):
 
     def _finish_processing_progress(self, outcome: str) -> None:
         backend = self._backend
-        if not backend._processing_progress.steps and backend._active_job:
-            backend._processing_progress.start(backend._active_job)
-        if not backend._processing_progress.steps:
+        if not self._state.processing_progress.steps and backend._active_job:
+            self._state.processing_progress.start(backend._active_job)
+        if not self._state.processing_progress.steps:
             # Trackerless jobs (currently the self-update process) retain the
             # legacy scalar progress path.  A successful process still needs
             # to reach 100% when its QProcess exits cleanly.
-            backend._processing_progress.finish(outcome)
+            self._state.processing_progress.finish(outcome)
             if outcome == "completed":
                 backend._progress = 1.0
                 backend.progressChanged.emit()
             backend.progressDetailsChanged.emit()
             return
-        backend._processing_progress.finish(outcome)
-        backend._progress = backend._processing_progress.value
+        self._state.processing_progress.finish(outcome)
+        backend._progress = self._state.processing_progress.value
         backend.progressChanged.emit()
         backend.progressDetailsChanged.emit()
 
     def _process_error(self, error: QProcess.ProcessError) -> None:
         backend = self._backend
         message = backend.process.errorString() or str(error)
-        backend._pending_process_error = message
+        self._state.pending_process_error = message
         backend._record_log(
             message,
             severity="ERROR",
@@ -517,45 +495,45 @@ class WorkflowFacade(FeatureFacade):
         backend = self._backend
         for event in parse_progress_events(output):
             try:
-                target_duration = float(event.get("duration", 0.0))
+                target_duration = coerce_float(event.get("duration", 0.0))
             except (TypeError, ValueError):
                 target_duration = 0.0
             if target_duration > 0.0:
-                backend._ffmpeg_duration_seconds = target_duration
-                backend._ffmpeg_duration_from_event = True
+                self._state.ffmpeg_duration_seconds = target_duration
+                self._state.ffmpeg_duration_from_event = True
             if (
                 event.get("step") == "encode"
                 and event.get("phase") == "start"
-                and not backend._ffmpeg_duration_from_event
+                and not self._state.ffmpeg_duration_from_event
             ):
-                backend._ffmpeg_duration_seconds = 0.0
-            if backend._processing_progress.update(event):
-                backend._processing_machine_event_seen = True
-                backend._progress = backend._processing_progress.value
+                self._state.ffmpeg_duration_seconds = 0.0
+            if self._state.processing_progress.update(event):
+                self._state.processing_machine_event_seen = True
+                backend._progress = self._state.processing_progress.value
                 backend.progressChanged.emit()
                 backend.progressDetailsChanged.emit()
         for line in output.splitlines():
-            if "Duration:" in line and backend._ffmpeg_duration_seconds <= 0.0:
+            if "Duration:" in line and self._state.ffmpeg_duration_seconds <= 0.0:
                 duration = parse_ffmpeg_timestamp(line)
                 if duration and duration > 0.0:
-                    backend._ffmpeg_duration_seconds = duration
-            if backend._processing_progress.current_step != "encode":
+                    self._state.ffmpeg_duration_seconds = duration
+            if self._state.processing_progress.current_step != "encode":
                 continue
             if "time=" not in line:
                 continue
             timestamp = parse_ffmpeg_timestamp(line)
-            if timestamp is None or backend._ffmpeg_duration_seconds <= 0.0:
+            if timestamp is None or self._state.ffmpeg_duration_seconds <= 0.0:
                 continue
-            encode_progress = min(1.0, timestamp / backend._ffmpeg_duration_seconds)
-            if backend._processing_progress.update(
+            encode_progress = min(1.0, timestamp / self._state.ffmpeg_duration_seconds)
+            if self._state.processing_progress.update(
                 {
-                    "job": backend._processing_progress.job,
+                    "job": self._state.processing_progress.job,
                     "step": "encode",
                     "phase": "progress",
                     "progress": encode_progress,
                 }
             ):
-                backend._progress = backend._processing_progress.value
+                backend._progress = self._state.processing_progress.value
                 backend.progressChanged.emit()
                 backend.progressDetailsChanged.emit()
         markers = [
@@ -576,22 +554,22 @@ class WorkflowFacade(FeatureFacade):
             if marker in output:
                 tracker_updated = False
                 if (
-                    backend._processing_progress.job
-                    and not backend._processing_machine_event_seen
+                    self._state.processing_progress.job
+                    and not self._state.processing_machine_event_seen
                     and step != "waveform"
                 ):
-                    tracker_updated = backend._processing_progress.update(
+                    tracker_updated = self._state.processing_progress.update(
                         {
-                            "job": backend._processing_progress.job,
+                            "job": self._state.processing_progress.job,
                             "step": step,
                             "phase": "progress",
                             "progress": progress,
                         }
                     )
                 if tracker_updated:
-                    backend._progress = backend._processing_progress.value
-                elif not backend._processing_machine_event_seen and (
-                    step != "waveform" or not backend._processing_progress.steps
+                    backend._progress = self._state.processing_progress.value
+                elif not self._state.processing_machine_event_seen and (
+                    step != "waveform" or not self._state.processing_progress.steps
                 ):
                     backend._progress = max(backend._progress, progress)
                 backend.progressChanged.emit()
@@ -610,7 +588,7 @@ class WorkflowFacade(FeatureFacade):
             failure_detail = next(
                 (
                     line.strip()
-                    for line in reversed(backend._process_output_tail.splitlines())
+                    for line in reversed(self._state.process_output_tail.splitlines())
                     if line.strip() and not line.lstrip().startswith("PROGRESS_EVENT ")
                 ),
                 "",
@@ -630,46 +608,91 @@ class WorkflowFacade(FeatureFacade):
             self._finish_processing_progress("cancelled")
             backend._set_status("処理を停止しました", "CANCELLED")
         elif exit_code == 0:
-            self._finish_processing_progress("completed")
             if completed_job == "transcribe":
                 preserved_workspace = (
                     (backend.workspace.currentEditMode, backend.workspace.editorPlayhead)
-                    if backend._transcription_preserved_project is not None
+                    if self._state.transcription_preserved_project is not None
                     else None
                 )
                 generated_project_path = (
-                    Path(backend._transcription_generated_project_path)
-                    if backend._transcription_generated_project_path
+                    Path(self._state.transcription_generated_project_path)
+                    if self._state.transcription_generated_project_path
                     else None
                 )
-                loaded = (
-                    backend._load_project_path(generated_project_path, update_sources=False)
-                    if generated_project_path is not None and generated_project_path.is_file()
-                    else backend._try_load_default_project()
-                )
+                loaded = False
                 merged = False
+                integration_saved = False
                 integration_error = ""
-                if loaded and backend._transcription_merge_mode in {"merge", "replace"}:
-                    try:
-                        applied = self._merge_preserved_transcription_segments()
-                        merged = applied and backend._transcription_merge_mode == "merge"
-                    except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
-                        integration_error = f"文字起こし結果の統合に失敗しました: {error}"
+                if self._state.transcription_preserved_project is not None:
+                    if generated_project_path is None or not generated_project_path.is_file():
+                        integration_error = "文字起こし結果の一時プロジェクトを読み込めませんでした"
+                    else:
                         try:
-                            self._restore_preserved_transcription_project()
-                        except (OSError, SubtitleProjectError, TypeError, ValueError) as restore_error:
-                            integration_error += f"（元プロジェクトの復元にも失敗しました: {restore_error}）"
-                if backend._transcription_generated_project_path and not loaded:
-                    integration_error = "文字起こし結果の一時プロジェクトを読み込めませんでした"
-                self._reset_transcription_integration_state()
+                            integrated = self.project_editor.integrate_transcription_result(
+                                generated_project_path,
+                                self._state.transcription_preserved_project,
+                                self._state.transcription_preserved_project_path,
+                                self._state.transcription_merge_mode,
+                            )
+                        except (OSError, SubtitleProjectError, TypeError, ValueError) as error:
+                            integration_error = f"文字起こし結果の統合に失敗しました: {error}"
+                        else:
+                            integration_saved = True
+                            try:
+                                self._publish_integrated_transcription_project(integrated)
+                            except Exception as error:
+                                integration_error = (
+                                    "文字起こし結果は保存しましたが画面の更新に失敗しました。"
+                                    f"プロジェクトを開き直してください: {error}"
+                                )
+                                backend._record_log(
+                                    traceback.format_exc(),
+                                    severity="ERROR",
+                                    component="transcribe",
+                                    job="transcribe",
+                                    stage="PUBLISH",
+                                )
+                            else:
+                                loaded = True
+                                merged = self._state.transcription_merge_mode == "merge"
+                else:
+                    loaded = (
+                        backend._load_project_path(generated_project_path, update_sources=False)
+                        if generated_project_path is not None and generated_project_path.is_file()
+                        else backend._try_load_default_project()
+                    )
+                    if generated_project_path is not None and not loaded:
+                        integration_error = "文字起こし結果の一時プロジェクトを読み込めませんでした"
+                preserve_generated_artifact = bool(
+                    integration_error
+                    and not integration_saved
+                    and self._state.transcription_preserved_project is not None
+                    and generated_project_path is not None
+                    and generated_project_path.is_file()
+                )
+                if preserve_generated_artifact:
+                    integration_error += f"。生成結果は {generated_project_path} に残しました"
+                self._reset_transcription_integration_state(
+                    preserve_generated_artifact=preserve_generated_artifact
+                )
                 if preserved_workspace is not None:
                     backend.workspace.selectEditMode(preserved_workspace[0])
                     playhead = preserved_workspace[1]
-                    basis = playhead["basis"]
-                    backend.workspace.setEditorPlayhead(playhead[f"{basis}PositionMs"], basis)
+                    basis = str(playhead["basis"])
+                    backend.workspace.setEditorPlayhead(coerce_int(playhead[f"{basis}PositionMs"]), basis)
                 if integration_error:
+                    self._finish_processing_progress("error")
                     backend._set_status(integration_error, "ERROR")
+                    backend._record_log(
+                        integration_error,
+                        severity="ERROR",
+                        component="transcribe",
+                        job="transcribe",
+                        stage="INTEGRATION",
+                    )
+                    backend._capture_process_diagnostic(job="transcribe", outcome="failed", exit_code=0)
                 else:
+                    self._finish_processing_progress("completed")
                     backend._set_status(
                         "文字起こし結果を既存字幕へ追加しました。内容を確認してください"
                         if merged
@@ -679,10 +702,13 @@ class WorkflowFacade(FeatureFacade):
                         "EDIT" if loaded else "CHECK",
                     )
             elif completed_job == "update":
+                self._finish_processing_progress("completed")
                 backend._set_status("更新が完了しました。アプリを再起動してください", "UPDATE")
             elif completed_job == "render_short":
+                self._finish_processing_progress("completed")
                 backend._set_status("ショート動画の書き出しが完了しました", "COMPLETE")
             else:
+                self._finish_processing_progress("completed")
                 backend._set_status("編集済み動画の書き出しが完了しました", "COMPLETE")
         else:
             if completed_job == "transcribe":

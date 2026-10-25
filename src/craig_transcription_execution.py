@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Mapping, Sequence
 
 from .transcription_profile import DEFAULT_VAD_ONSET, DEFAULT_VAD_OFFSET
 from .transcription_execution import TranscriptionExecutionResult, transcribe_audio_with_cache
@@ -15,7 +15,7 @@ class CraigTranscriptionHint:
     initial_prompt: str = ""
     hotwords: tuple[str, ...] = ()
     cache_fingerprint: str | None = None
-    cache_settings: Mapping[str, Any] | None = None
+    cache_settings: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True)

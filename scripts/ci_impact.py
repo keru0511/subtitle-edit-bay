@@ -5,9 +5,17 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.data_boundary import decode_json, is_object_list, is_object_mapping
+
 JOBS = (
     "python-quality",
     "windows-tests",
@@ -27,10 +35,47 @@ GROUP_JOBS = {
 }
 
 
+class TestGroup(TypedDict):
+    modules: list[str]
+    selectors: list[str]
+
+
+@dataclass
+class CIImpactArgs(argparse.Namespace):
+    base_sha: str = ""
+    source_sha: str = ""
+    event_name: str = ""
+    github_output: Path = Path(".")
+
+
+def _string_list(value: object) -> list[str]:
+    if not is_object_list(value) or any(not isinstance(item, str) for item in value):
+        raise ValueError("CIテスト分類の配列には文字列のみ指定できます")
+    return [item for item in value if isinstance(item, str)]
+
+
+def _load_test_groups() -> dict[str, TestGroup]:
+    payload = decode_json((ROOT / "tests/ci_test_groups.json").read_text(encoding="utf-8"))
+    if not is_object_mapping(payload):
+        raise ValueError("CIテスト分類の形式が不正です")
+    raw_groups = payload.get("groups")
+    if not is_object_mapping(raw_groups):
+        raise ValueError("CIテスト分類にgroupsがありません")
+    groups: dict[str, TestGroup] = {}
+    for name, value in raw_groups.items():
+        if not isinstance(name, str) or not is_object_mapping(value):
+            raise ValueError("CIテスト分類のグループが不正です")
+        groups[name] = {
+            "modules": _string_list(value.get("modules")),
+            "selectors": _string_list(value.get("selectors")),
+        }
+    return groups
+
+
 def plan_changes(paths: list[str], *, full: bool = False) -> dict[str, bool]:
     """複数領域は和集合にする。削除・改名されたテストも安全側へ倒す。"""
     selected = {"python-quality"}
-    groups = json.loads((ROOT / "tests/ci_test_groups.json").read_text())["groups"]
+    groups = _load_test_groups()
     for path in paths:
         if (path.startswith("docs/") and path.endswith(".md")) or path in {"README.md", "AGENTS.md", "LICENSE"}:
             continue
@@ -79,7 +124,7 @@ def main() -> None:
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--event-name", required=True)
     parser.add_argument("--github-output", type=Path, required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(namespace=CIImpactArgs())
     full = args.event_name not in {"pull_request", "push"} or not args.base_sha or set(args.base_sha) == {"0"}
     paths: list[str] = []
     if not full:
@@ -88,7 +133,8 @@ def main() -> None:
         except (subprocess.CalledProcessError, UnicodeDecodeError):
             full = True
     plan = plan_changes(paths, full=full)
-    print(json.dumps({"changed_files": paths, "full": full, "plan": plan}, ensure_ascii=False))
+    summary: dict[str, object] = {"changed_files": paths, "full": full, "plan": plan}
+    print(json.dumps(summary, ensure_ascii=False))
     with args.github_output.open("a", encoding="utf-8") as output:
         output.write(f"codeql={str(any(value for job, value in plan.items() if job != 'python-quality')).lower()}\n")
         output.write("impact_plan=" + json.dumps(plan, separators=(",", ":")) + "\n")

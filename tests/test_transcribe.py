@@ -6,6 +6,9 @@ import os
 import subprocess
 import tempfile
 import unittest
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from unittest import mock
 
@@ -18,11 +21,39 @@ from src.transcribe import (
     run_command_with_utf8_log,
     validate_hf_token,
 )
+from tests.typed_case import TypedTestCase
 
 
-class TranscribeTests(unittest.TestCase):
+@contextmanager
+def _hf_token(value: str) -> Iterator[None]:
+    previous = os.environ.get("HF_TOKEN")
+    os.environ["HF_TOKEN"] = value
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("HF_TOKEN", None)
+        else:
+            os.environ["HF_TOKEN"] = previous
+
+
+@dataclass
+class _FakeProbeResult:
+    stdout: str
+
+
+class _FakeProcess:
+    def __init__(self, output: str, return_code: int) -> None:
+        self.stdout = io.StringIO(output)
+        self.return_code = return_code
+
+    def wait(self) -> int:
+        return self.return_code
+
+
+class TranscribeTests(TypedTestCase):
     def test_probe_audio_streams_parses_json(self) -> None:
-        streams = [
+        streams: list[dict[str, object]] = [
             {
                 "index": 0,
                 "codec_name": "aac",
@@ -30,8 +61,8 @@ class TranscribeTests(unittest.TestCase):
                 "tags": {"language": "jpn", "title": "Main"},
             }
         ]
-        with mock.patch("src.transcribe.subprocess.run") as run:
-            run.return_value = mock.MagicMock(stdout=json.dumps({"streams": streams}))
+        payload: dict[str, object] = {"streams": streams}
+        with mock.patch("src.transcribe.subprocess.run", return_value=_FakeProbeResult(json.dumps(payload))):
             result = probe_audio_streams("/tmp/video.mkv")
             self.assertEqual(result, streams)
 
@@ -40,6 +71,13 @@ class TranscribeTests(unittest.TestCase):
             run.side_effect = subprocess.CalledProcessError(1, ["ffprobe"])
             with self.assertRaises(subprocess.CalledProcessError):
                 probe_audio_streams("/tmp/video.mkv")
+
+    def test_probe_audio_streams_rejects_malformed_response(self) -> None:
+        for payload in ("[]", '{"streams": {}}', '{"streams": [42]}'):
+            with self.subTest(payload=payload):
+                with mock.patch("src.transcribe.subprocess.run", return_value=_FakeProbeResult(payload)):
+                    with self.assertRaises(ValueError):
+                        probe_audio_streams("/tmp/video.mkv")
 
     def test_build_extract_audio_command(self) -> None:
         command = build_extract_audio_command("in.mkv", "out.wav", "0:a:1")
@@ -56,16 +94,16 @@ class TranscribeTests(unittest.TestCase):
         self.assertEqual(_normalized_hotwords(["a\x01b"]), ["ab"])
 
     def test_validate_hf_token_does_nothing_without_diarize(self) -> None:
-        with mock.patch.dict(os.environ, {"HF_TOKEN": ""}, clear=False):
+        with _hf_token(""):
             validate_hf_token(False)
 
     def test_validate_hf_token_raises_when_missing(self) -> None:
-        with mock.patch.dict(os.environ, {"HF_TOKEN": ""}, clear=True):
+        with _hf_token(""):
             with self.assertRaises(SystemExit):
                 validate_hf_token(True)
 
     def test_build_whisperx_command_includes_diarization_args(self) -> None:
-        with mock.patch.dict(os.environ, {"HF_TOKEN": "token"}, clear=False):
+        with _hf_token("token"):
             command = build_whisperx_command(
                 "audio.wav",
                 "/out",
@@ -80,7 +118,7 @@ class TranscribeTests(unittest.TestCase):
         self.assertIn("5", command)
 
     def test_build_whisperx_command_omits_speaker_count_when_none(self) -> None:
-        with mock.patch.dict(os.environ, {"HF_TOKEN": "token"}, clear=False):
+        with _hf_token("token"):
             command = build_whisperx_command("audio.wav", "/out", diarize=True)
         self.assertIn("--diarize", command)
         self.assertNotIn("--min_speakers", command)
@@ -121,12 +159,16 @@ class TranscribeTests(unittest.TestCase):
         self.assertIn("language=jpn", output)
         self.assertIn("title=Voice", output)
 
+    def test_print_streams_tolerates_non_mapping_tags(self) -> None:
+        captured = io.StringIO()
+        with mock.patch("sys.stdout", captured):
+            print_streams([{"index": 1, "tags": 42}])
+        self.assertIn("ffmpeg_index=1", captured.getvalue())
+
     def test_run_command_with_utf8_log_writes_output(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             log_path = Path(temp_dir) / "log.txt"
-            fake_process = mock.MagicMock()
-            fake_process.stdout = io.StringIO("hello\n")
-            fake_process.wait.return_value = 0
+            fake_process = _FakeProcess("hello\n", 0)
             with mock.patch("src.transcribe.subprocess.Popen", return_value=fake_process):
                 run_command_with_utf8_log(["echo", "hello"], str(log_path))
             self.assertIn("hello", log_path.read_text(encoding="utf-8"))
@@ -134,9 +176,7 @@ class TranscribeTests(unittest.TestCase):
     def test_run_command_with_utf8_log_raises_and_writes_on_nonzero(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             log_path = Path(temp_dir) / "log.txt"
-            fake_process = mock.MagicMock()
-            fake_process.stdout = io.StringIO("error\n")
-            fake_process.wait.return_value = 1
+            fake_process = _FakeProcess("error\n", 1)
             with mock.patch("src.transcribe.subprocess.Popen", return_value=fake_process):
                 with self.assertRaises(subprocess.CalledProcessError):
                     run_command_with_utf8_log(["false"], str(log_path))

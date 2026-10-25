@@ -23,7 +23,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-from PySide6.QtCore import QCoreApplication, QMetaObject, QMimeData, QObject, QPoint, QPointF, QProcess, Qt, QUrl
+from PySide6.QtCore import QCoreApplication, QEvent, QMetaObject, QMimeData, QObject, QPoint, QPointF, QProcess, QTimer, Qt, QUrl
 from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont, QInputMethodEvent, QKeySequence
 from PySide6.QtMultimedia import QAudioBuffer, QAudioFormat, QMediaPlayer
 from PySide6.QtQml import QJSValue, QQmlApplicationEngine
@@ -241,6 +241,33 @@ def _qml_settings(item: QObject) -> dict[str, object]:
     if not is_string_object_dict(settings):
         raise AssertionError("設定が辞書ではありません")
     return settings
+
+
+class _DeferredWindowUpdate(QObject):
+    """表示フレームを次のイベント処理まで延期し、未配置の状態を再現する。"""
+
+    def __init__(self, window: QQuickWindow) -> None:
+        super().__init__(window)
+        self.window = window
+        self.deferred = False
+        self.released = False
+        window.installEventFilter(self)
+        window.requestUpdate()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if not self.released and event.type() == QEvent.Type.UpdateRequest:
+            if not self.deferred:
+                self.deferred = True
+                QTimer.singleShot(0, self.release)
+            return True
+        return False
+
+    def release(self) -> None:
+        if self.released:
+            return
+        self.released = True
+        self.window.removeEventFilter(self)
+        self.window.requestUpdate()
 
 
 class GuiEditorRegressionTests(TypedTestCase):
@@ -13353,17 +13380,42 @@ Window {
         self.assertEqual(str(self.app.sequenceClips[0]["clipId"]), first_clip_id)
 
     def test_sequence_clip_card_drag_cancel_restores_position(self) -> None:
+        self._assert_sequence_clip_card_drag_cancel_restores_position()
+
+    def test_sequence_clip_card_drag_cancel_waits_for_pending_layout(self) -> None:
+        """Windows GUI CI必須: 描画が遅れても対象カードの配置を待ち、キャンセルで位置・順序を保つ。"""
+        self._assert_sequence_clip_card_drag_cancel_restores_position(defer_frame=True)
+
+    def _assert_sequence_clip_card_drag_cancel_restores_position(self, *, defer_frame: bool = False) -> None:
         self._make_sequence_project()
+        initial_clips = deepcopy(self.app.sequenceClips)
         first_clip_id = str(self.app.sequenceClips[0]["clipId"])
         _, window = self._load_qml()
         self.gui.resize(window, 1520, 940)
+        deferred = _DeferredWindowUpdate(window) if defer_frame else None
+        if deferred is not None:
+            # 失敗経路でも、ウィンドウの破棄より先にフィルターを解除する。
+            self.addCleanup(deferred.release)
         self.app.selectEditMode("cut")
         window.setProperty("editTool", "sequence")
         clip_list = self._quick_item(window, "sequenceClipList")
-        self.gui.wait_until(lambda: clip_list.isVisible(), description="クリップ詳細カード")
+
+        # visible の切替後も、レイアウトと delegate 生成が未完了の場合がある。
+        def card_is_ready() -> bool:
+            if not clip_list.isVisible() or clip_list.width() <= 0 or clip_list.height() <= 0:
+                return False
+            candidate = self.gui.find_visual_item_by_properties(
+                clip_list, {"clipId": first_clip_id}, required_properties=("clipId",),
+            )
+            return candidate.isVisible() and candidate.width() > 0 and candidate.height() > 0
+
+        self.gui.wait_until(card_is_ready, description=f"クリップ詳細カード {first_clip_id} の生成と配置")
         card = self.gui.find_visual_item_by_properties(
             clip_list, {"clipId": first_clip_id}, required_properties=("clipId",),
         )
+        if deferred is not None:
+            self.assertTrue(deferred.deferred)
+            self.assertTrue(deferred.released)
         original_position = card.position()
         start = card.mapToScene(QPointF(20, 30)).toPoint()
         end = start + QPoint(70, 145)
@@ -13380,6 +13432,7 @@ Window {
         self.assertEqual(card.position(), original_position)
         self.assertEqual(len(self.app.sequenceClips), 1)
         self.assertEqual(str(self.app.sequenceClips[0]["clipId"]), first_clip_id)
+        self.assertEqual(self.app.sequenceClips, initial_clips)
 
     def test_sequence_timeline_drag_trims_and_reorders_clips(self) -> None:
         _, _, second_video = self._make_sequence_project()

@@ -27,6 +27,30 @@ Item {
     signal seekRequested(real positionMilliseconds)
     signal speakerColorRequested(int speakerIndex, string currentColor)
     signal contentYChangedByUser(real value)
+    signal clipFilterRequested(string clipId)
+
+    readonly property var clipFilterChoices: {
+        var choices = [{ "clipId": "", "label": "全シーケンス" }]
+        var clips = root.backend.sequence.sequenceClips || []
+        for (var index = 0; index < clips.length; ++index) {
+            var clip = clips[index]
+            choices.push({
+                "clipId": String(clip.clipId),
+                "label": "#" + (index + 1) + " " + String(clip.assetName || "動画")
+                    + " (" + Number(clip.sourceStart).toFixed(1)
+                    + "–" + Number(clip.sourceEnd).toFixed(1) + "秒)"
+            })
+        }
+        return choices
+    }
+
+    function clipFilterIndex(clipId) {
+        for (var index = 0; index < root.clipFilterChoices.length; ++index) {
+            if (String(root.clipFilterChoices[index].clipId) === String(clipId))
+                return index
+        }
+        return 0
+    }
 
     function speakerIndex(style) {
         for (var index = 0; index < root.speakers.length; ++index) {
@@ -128,7 +152,42 @@ Item {
             Layout.fillWidth: true
             Text { text: "字幕設定"; color: root.textColor; font.family: "Yu Gothic UI"; font.pixelSize: 13; font.weight: Font.Bold }
             Item { Layout.fillWidth: true }
-            Text { text: root.backend.subtitles.segmentCount + "件"; color: root.accentColor; font.family: "Yu Gothic UI"; font.pixelSize: 9 }
+            Text {
+                text: (root.backend.subtitles.subtitleClipFilterId
+                    ? root.backend.subtitles.filteredSegmentCount + " / " + root.backend.subtitles.segmentCount
+                    : root.backend.subtitles.segmentCount) + "件"
+                color: root.accentColor
+                font.family: "Yu Gothic UI"
+                font.pixelSize: 9
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 5
+            Text {
+                text: "表示範囲"
+                color: root.mutedColor
+                font.family: "Yu Gothic UI"
+                font.pixelSize: 9
+            }
+            ComboBox {
+                id: clipFilterCombo
+                objectName: "workspaceSubtitleClipFilter"
+                enabled: !root.backend.running && !root.imeComposing
+                Layout.fillWidth: true
+                model: root.clipFilterChoices
+                textRole: "label"
+                valueRole: "clipId"
+                currentIndex: root.clipFilterIndex(root.backend.subtitles.subtitleClipFilterId)
+                onActivated: {
+                    root.clipFilterRequested(String(currentValue))
+                    // 入力未確定で拒否された場合も、選択表示を正本へ戻す。
+                    currentIndex = Qt.binding(function() {
+                        return root.clipFilterIndex(root.backend.subtitles.subtitleClipFilterId)
+                    })
+                }
+            }
         }
 
         ListView {
@@ -139,8 +198,10 @@ Item {
             clip: true
             spacing: 5
             boundsBehavior: Flickable.StopAtBounds
-            model: root.backend.subtitles.subtitleModel
-            currentIndex: root.backend.subtitles.selectedSegmentIndex
+            model: root.backend.subtitles.subtitleClipFilterId
+                ? root.backend.subtitles.filteredSubtitleModel
+                : root.backend.subtitles.subtitleModel
+            currentIndex: root.backend.subtitles.filteredSelectedSegmentIndex
             onContentYChanged: {
                 if (!root.restoringContentY)
                     root.contentYChangedByUser(contentY)
@@ -165,8 +226,8 @@ Item {
                 width: subtitleList.width
                 height: 46
                 radius: 7
-                color: root.backend.subtitles.selectedSegmentIndex === subtitleRow.index ? "#263326" : root.raisedColor
-                border.color: root.backend.subtitles.selectedSegmentIndex === subtitleRow.index ? root.accentColor : root.borderColor
+                color: root.backend.subtitles.filteredSelectedSegmentIndex === subtitleRow.index ? "#263326" : root.raisedColor
+                border.color: root.backend.subtitles.filteredSelectedSegmentIndex === subtitleRow.index ? root.accentColor : root.borderColor
                 Column {
                     anchors.fill: parent
                     anchors.margins: 6
@@ -177,7 +238,8 @@ Item {
                 MouseArea {
                     anchors.fill: parent
                     onClicked: {
-                        root.backend.subtitles.selectSegment(subtitleRow.index)
+                        root.backend.subtitles.selectSegment(
+                            root.backend.subtitles.subtitleSourceIndexForRow(subtitleRow.index))
                         root.seekRequested(subtitleRow.start * 1000)
                     }
                 }
@@ -186,8 +248,13 @@ Item {
 
             Text {
                 anchors.centerIn: parent
-                visible: root.backend.subtitles.segmentCount === 0
-                text: "字幕はまだありません\n下部の「字幕追加」から作成できます"
+                visible: root.backend.subtitles.subtitleClipFilterId
+                    ? root.backend.subtitles.filteredSegmentCount === 0
+                    : root.backend.subtitles.segmentCount === 0
+                text: root.backend.subtitles.subtitleClipFilterId
+                    ? (root.backend.subtitles.subtitleClipHasTranscript
+                        ? "この範囲に字幕はありません" : "この動画素材には文字起こしがありません")
+                    : "字幕はまだありません\n下部の「字幕追加」から作成できます"
                 color: root.mutedColor
                 font.family: "Yu Gothic UI"
                 font.pixelSize: 9
@@ -196,7 +263,14 @@ Item {
         }
 
         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.borderColor }
-        Text { text: root.backend.subtitles.selectedSegmentIndex >= 0 ? "選択中の字幕" : "字幕を選択してください"; color: root.textColor; font.family: "Yu Gothic UI"; font.pixelSize: 10; font.weight: Font.DemiBold }
+        Text {
+            text: root.backend.subtitles.filteredSelectedSegmentIndex >= 0
+                ? "選択中の字幕" : "字幕を選択してください"
+            color: root.textColor
+            font.family: "Yu Gothic UI"
+            font.pixelSize: 10
+            font.weight: Font.DemiBold
+        }
 
         Flickable {
             Layout.fillWidth: true
@@ -205,7 +279,7 @@ Item {
             contentWidth: width
             contentHeight: selectedEditor.implicitHeight
             boundsBehavior: Flickable.StopAtBounds
-            visible: root.backend.subtitles.selectedSegmentIndex >= 0
+            visible: root.backend.subtitles.filteredSelectedSegmentIndex >= 0
 
             ColumnLayout {
                 id: selectedEditor

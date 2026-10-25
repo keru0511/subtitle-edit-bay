@@ -600,11 +600,11 @@ def main() -> int:
             write_report(output, report)
             return 1 if _messages(report["failures"]) else 0
         if args.score_json:
+            report["scored_existing_json"] = True
             manifest_raw: object = json.loads(args.manifest.resolve().read_text(encoding="utf-8"))
             transcript: object = json.loads(args.score_json.read_text(encoding="utf-8"))
             report["manifest"] = manifest_raw
             report["candidate"] = score_transcript(transcript, manifest_raw)
-            report["scored_existing_json"] = True
             report["transcript_sha256"] = sha256_file(args.score_json)
             write_report(output, report)
             return 0
@@ -642,7 +642,8 @@ def main() -> int:
         if not args.revision:
             failures = quality_failures(report["baseline"], report["candidate"], manifest["limits"])
     except Exception as error:
-        failures.append(f"実認識検証が完了しませんでした: {type(error).__name__}: {error}")
+        operation = "既存JSONの採点" if args.score_json else "実認識検証"
+        failures.append(f"{operation}が完了しませんでした: {type(error).__name__}: {error}")
     report["failures"] = failures
     write_report(output, report)
     return 1 if failures else 0

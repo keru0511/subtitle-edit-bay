@@ -432,3 +432,55 @@ class TranscriptionBenchmarkTests(TypedTestCase):
             markdown = (Path(temporary) / "report.md").read_text(encoding="utf-8")
         self.assertIn("この実況素材の定義した基準で回帰なし", markdown)
         self.assertNotIn("実際のゲーム実況における改善を証明するものではありません", markdown)
+
+    def test_existing_json_failure_writes_diagnostic_without_loading_model(self) -> None:
+        invalid_manifests: list[object] = [[], {**self.manifest, "speech_windows": True}]
+        for invalid_manifest in invalid_manifests:
+            with self.subTest(manifest=invalid_manifest), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                manifest_path = root / "manifest.json"
+                transcript_path = root / "transcript.json"
+                manifest_path.write_text(json.dumps(invalid_manifest), encoding="utf-8")
+                transcript_path.write_text(json.dumps(self.payload), encoding="utf-8")
+                argv = [
+                    "benchmark_transcription.py",
+                    "--manifest",
+                    str(manifest_path),
+                    "--score-json",
+                    str(transcript_path),
+                    "--output",
+                    str(root / "report"),
+                ]
+                summary_environment: dict[str, str] = {"GITHUB_STEP_SUMMARY": ""}
+                with (
+                    patch("sys.argv", argv),
+                    patch("scripts.benchmark_transcription.prepare_audio") as prepare,
+                    patch("scripts.benchmark_transcription.importlib.metadata.version") as versions,
+                    patch.dict(os.environ, summary_environment),
+                    redirect_stdout(io.StringIO()),
+                ):
+                    self.assertEqual(benchmark_main(), 1)
+                prepare.assert_not_called()
+                versions.assert_not_called()
+                raw_report: object = json.loads((root / "report" / "report.json").read_text(encoding="utf-8"))
+                assert is_string_object_mapping(raw_report)
+                self.assertTrue(raw_report["scored_existing_json"])
+                self.assertNotIn("candidate", raw_report)
+                failures = raw_report["failures"]
+                assert is_object_list(failures) and isinstance(failures[0], str)
+                self.assertIn("既存JSONの採点が完了しませんでした", failures[0])
+                markdown = (root / "report" / "report.md").read_text(encoding="utf-8")
+                self.assertIn("# 既存の文字起こしJSONの採点", markdown)
+                self.assertNotIn("片側の実認識を完了", markdown)
+
+    def test_legacy_report_does_not_invent_runtime_conditions(self) -> None:
+        baseline, candidate = self.paired_reports()
+        report = merge_reports(baseline, candidate)
+        summary_environment: dict[str, str] = {"GITHUB_STEP_SUMMARY": ""}
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.dict(os.environ, summary_environment), redirect_stdout(io.StringIO()):
+                write_report(Path(temporary), report)
+            markdown = (Path(temporary) / "report.md").read_text(encoding="utf-8")
+        self.assertIn("認識モデル: 実行条件は未記録", markdown)
+        self.assertNotIn("CPU int8", markdown)
+        self.assertNotIn("既存JSONの実行条件", markdown)
